@@ -1,5 +1,8 @@
 # RondoRecomp
 
+[![release](https://img.shields.io/github/v/release/gminustwo/RondoRecomp?filter=v%2A&sort=semver&display_name=tag&label=release&color=orange)](https://github.com/gminustwo/RondoRecomp/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/gminustwo/RondoRecomp/total?label=downloads&color=brightgreen)](https://github.com/gminustwo/RondoRecomp/releases)
+
 Static recompilation of *Castlevania: Rondo of Blood* (PC Engine Super CD-ROM²) into a native PC application.
 
 ## Supported Platforms
