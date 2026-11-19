@@ -40,6 +40,8 @@
 #include "prompt.h"
 #include "programs.h"
 #include "update.h"
+#include "wide.h"
+#include "dedither.h"
 
 #define FRAME_RATE (7159090.0 / (455.0 * 263.0))   /* 59.826 Hz */
 #define AUDIO_RATE 44100
@@ -156,11 +158,13 @@ static bool no_save_files;   /* test runs: fresh backup RAM, nothing written to 
 static TitlePrompt prompt;   /* the title's PUSH RUN BUTTON! as this PC's button (pad set per frame) */
 static Moves moves;          /* the Gameplay page's 8-way whip and limp whip (moves.h) */
 static MoveOptions move_opts;   /* this frame's: off in hardcore mode and the tests */
+static Wide wide;            /* 16:9 widescreen (wide.h): decided before every frame */
 
 /* A frame of the game. While rewinding (`live` false) the moves only draw: the frame shown is
  * one already played. */
 static void run_frame_as(bool live)
 {
+    wide_frame(&wide, &pce);
     prompt_before_frame(&prompt, &pce);
     moves_before_frame(&moves, &pce, &move_opts, live);
     pce_run_frame(&pce);
@@ -589,6 +593,7 @@ int main(int argc, char **argv)
         if (features_dir) {
             set.skip = SKIP_AUTO;
             set.cheat_health = set.cheat_hearts = set.cheat_lives = true;
+            set.widescreen = true;   /* off by default, but tested (the window is 16:9) */
         }
     }
 
@@ -1102,6 +1107,16 @@ int main(int argc, char **argv)
         bool hardcore = ach_hardcore();
         if (hardcore) memset(&cheats, 0, sizeof cheats);   /* RetroAchievements' hardcore mode: none */
         move_opts = (MoveOptions){set.eight_way && !hardcore && !test_mode, set.limp_whip && !hardcore && !test_mode};
+        vce_set_smooth_fades(set.smooth_fades && !test_mode);   /* only the picture: kept in hardcore */
+        {   /* widescreen fills the window's shape, up to 16:9 (off in hardcore mode: it changes
+             * the game's code and shows more of the level) */
+            int ww, wh;
+            SDL_GetRenderOutputSize(ren, &ww, &wh);
+            wide.edges = set.wide_edges;
+            wide.menus = set.wide_menus;
+            wide.want = set.widescreen && !hardcore && wh > 0
+                            ? wide_extent((double)ww / (double)wh, video_picture_aspect(&video, &set)) : 0;
+        }
         bool rewinding = false, ran_frame = false;
         if (menu_on_start_screen(&menu)) {
             /* the start screen: the game waits for Play (nothing runs, nothing sounds) */
@@ -1248,7 +1263,36 @@ int main(int argc, char **argv)
         }
 
         /* video */
-        video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
+        {   /* widescreen grows out of the 4:3 picture instead of appearing at once (the Prologue
+             * after its story scene, a scrolling room after a shaft): the columns shown each side
+             * ease towards what the frame has, about 90% of the way in half a second; back
+             * to 4:3 is at once (the game no longer draws them) */
+            static double shown;
+            int have = pce.vdc.fb_wide;
+            if (have <= shown) shown = have;
+            else if (ran_frame) {
+                shown += (have - shown) * 0.09 + 0.25;
+                if (shown > have) shown = have;
+            }
+            int cut = have - (int)shown;
+            const uint32_t *fb = pce.vdc.fb;
+            static bool dd_valid;   /* off: worked out again when turned on */
+            if (!set.smooth_dither) dd_valid = false;
+            if (set.smooth_dither && !test_mode) {
+                /* only the picture: kept in hardcore. Worked out once a game frame (a few ms),
+                 * not at every refresh of the screen. */
+                static uint32_t dd[PCE_FB_MAX_W * PCE_FB_MAX_H];
+                static uint64_t dd_frame;
+                if (!dd_valid || ran_frame || dd_frame != (uint64_t)pce.frame) {
+                    dedither(pce.vdc.fb, dd, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
+                    dd_valid = true;
+                    dd_frame = (uint64_t)pce.frame;
+                }
+                fb = dd;
+            }
+            video_upload(&video, fb + cut, pce.vdc.fb_w - 2 * cut, pce.vdc.fb_h, PCE_FB_MAX_W, have - cut);
+            video.src_wide_full = have;
+        }
         if (features_dir && !t_shots && pce.frame >= 17880) {
             /* screenshots: 16:9 window with each picture mode and screen effect, then the menu
              * pages */
@@ -1428,14 +1472,15 @@ int main(int argc, char **argv)
         }
         static bool t_stage1_shot;
         if (features_dir && !t_stage1_shot && pce.frame >= 20060) {
-            /* Stage 1 */
+            /* Stage 1, 16:9 */
             t_stage1_shot = true;
             char path[1200];
             video_draw(&video, &set);
             snprintf(path, sizeof path, "%s/stage1.bmp", features_dir);
             screenshot(ren, path);
-            TLOG("features: Stage 1 at frame %llu (state %02X/%02X)\n", (unsigned long long)pce.frame,
-                 pce.wram[RONDO_STATE], pce.wram[RONDO_SUB]);
+            TLOG("features: Stage 1 at frame %llu (state %02X/%02X), widescreen %d px a side of the %d wanted "
+                 "(background changes %s)\n", (unsigned long long)pce.frame, pce.wram[RONDO_STATE],
+                 pce.wram[RONDO_SUB], pce.vdc.fb_wide, wide.want, wide.patched ? "in" : "MISSING");
             TLOG("features: title screen's PUSH RUN BUTTON! %s (%d frames, as the %s)\n",
                  prompt.frames ? "replaced" : "NOT REPLACED", prompt.frames, prompt.pad ? "controller's" : "keyboard's");
         }
@@ -1492,7 +1537,7 @@ int main(int argc, char **argv)
                     pce.pad = moves_pad(&moves, &pce, &on, pad, attack);
                     if (attack) up_seen |= pce.pad & PAD_UP;
                     run_frame();
-                    video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
+                    video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.vdc.fb_wide);
                     char path[1200];
                     if (moves.draw && moves.dir == 2) {
                         up_frames++;

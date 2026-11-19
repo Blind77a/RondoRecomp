@@ -68,7 +68,8 @@ Findings so far: [docs/findings.md](docs/findings.md).
 - A gothic start screen (a candlelit town at night under a pale moon) and menus in arched
   gold-and-umber frames with blackletter titles, with controller, keyboard and mouse.
 - An in-game menu (F1 / Back): video modes for 4K, 16:9 and ultrawide screens (4:3 with
-  blurred sides, square pixels, stretch, integer scaling, sharp filtering), cinematic
+  blurred sides, square pixels, stretch, integer scaling, sharp filtering), a 16:9 widescreen
+  option (off by default) that shows more of the level on each side, cinematic
   skipping, cheats (infinite health, hearts, lives), modern controller layout with
   sub-weapon / Item Crash / backflip buttons, rebindable controls (keys of your own to move, such
   as WASD, alongside the arrows), and a Japanese option (with your Japanese disc).

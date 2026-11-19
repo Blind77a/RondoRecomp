@@ -203,8 +203,8 @@ down once it drops more than 12 times in a second, which damage and sub-weapons 
 
 ## Camera, scrolling and objects
 
-Found for the widescreen option (0.6 to 0.12; taken out in 0.13, see git history for
-`tools/frontend/wide.c`).
+Found for the widescreen option (0.6 to 0.12 up to 21:9; taken out in 0.13; back as 16:9 in
+`tools/frontend/wide.c`, see docs/runtime.md).
 
 - Scroll layers at $1E00+ (8 layers): X sub/low/high $1E00/$1E08/$1E10, Y $1E18/$1E20/$1E28,
   velocities $1E6E-$1E86, map page counters $1E8E/$1E96, per-frame copies at $1E39+ for the
