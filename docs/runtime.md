@@ -317,23 +317,25 @@ disc as it goes):
   97% of the side tiles fill for 8 frames in a row (`MENU_FRAMES`); then held with the last
   sides that filled for up to 60 frames that do not (`MENU_HOLD`: a page sliding over puts
   its frames at the edges), so it does not flick to 4:3. `rondo_headless --wide-menus`.
-- Title art (Video > Title art, on by default; `titleart.c`): the title's clouds have no
-  repeat, so its sides come from the player's own `title_sides.png` in the profile folder
-  (any `*_sides.png` there, up to 8: each still screen its own, the stage map's too, the one
-  that matched last tried first)
-  (396 x 225: the title's 256 x 225 picture at columns 70-325 as the reference, 70 columns of
-  art each side in colours of the reference's; loaded with SDL_LoadPNG, SDL 3.4). Every
-  colour of the reference is a palette entry, and the fade-in, the clouds' shimmer and the
-  lightning change the entries, so each refresh (not gameplay, picture not widened by the
-  game) every reference colour is looked up where the reference has it in the game's raw
-  picture (every 2nd pixel each way, the prompt's rows 138-156 left out; before Smooth
-  dithering) and the sides are drawn with what it has become. The frame is the title when
-  92% of those samples agree with their colour's most common value (85% once shown: the
-  lightning bolt is a sprite) and, to start, at least 6 colours other than black are up; a
-  black screen keeps it. `rondo_headless --title-art FILE` (the PNG's pixels, raw ARGB)
-  writes shots of the title with it. The player's file is never shipped (art made from
-  Konami's title). The Setup SDK's source list (`tools/make_sdk.cmake`) now has
-  `dedither.c` and `titleart.c`.
+- Title art (Video > Title art, on by default; `titleart.c`): the title's and the stage map's
+  art has no repeat, so their sides come from the player's own files: any `*_sides.png` in
+  the profile folder (up to 8), 396 x 228. They hold no picture of the game's: each side
+  pixel (columns 0-69, 326-395 of rows 0-224) is a palette entry (R = low 8 bits, G bit 0 =
+  bit 8; alpha 0 = none), drawn with what that entry held when the line beside it was drawn
+  (`vdc_line_palette`, taken every 16 lines: the lightning changes colours while the picture is
+  drawn; Smooth fades' blend too), so the art follows the fades, the clouds' shimmer and the lightning as
+  the game's pixels do; rows 225-227 hold 'R' 'S' '1' and the screen's 28 x 32 map entries
+  (`titleart_layout`: each tile row's middle line's map row and first column). A frame is the
+  screen when 85% of its map entries match (75% once shown: a prompt blinks, a stage name
+  changes), which holds from its first frame (the map is set before the fade-in); while the
+  middle is all black (its palette is up before its background is), the sides are black too.
+  The screen's first column, a shade darker, is drawn as the next. The files are made by a
+  converter from art generated around a template: `rondo_headless --dump-layout FRAME:FILE`
+  writes the screen's map entries and each background pixel's palette entry for it, and
+  each side colour (snapped to the screen's own) becomes the entry the screen's own edge uses
+  it for, nearest row first (the same colour can be in two palettes, only one of which flashes).
+  `rondo_headless --title-art FILE` (the file's pixels, raw ARGB) writes shots with it. The
+  Setup SDK's source list (`tools/make_sdk.cmake`) has `dedither.c` and `titleart.c`.
 
 A room is shown wide when the background changes are in and it scrolls sideways, or when it
 is one screen wide but its scenery scrolls past (the carriage chase); bands of rows holding

@@ -276,13 +276,12 @@ enemies on that side come on and start moving further out, out of sight. Black s
 the picture centred with black past the wall. Video > Wide menus (on by default) draws
 the file select menus wide as well, their wavy background carried on to the sides (a
 page sliding over passes behind them); screens whose picture does not repeat (the title
-screen, story scenes) stay 4:3. The title screen can be widened with art of your own
-(Video > Title art): put a 396 x 225 PNG named title_sides.png in your profile folder (where
-settings.ini is), with the title's 256 x 225 picture in the middle (columns 70 to 325) and
-70 columns of your art on each side. The game recognises the title by the middle, draws your
-sides beside it and fades and flashes them with it; nothing else is changed. Any other still
-screen works the same way (the stage map: map_sides.png): every file ending in _sides.png is
-used, each for the screen its middle shows. They are yours alone: never part of a release. Where the
+screen, story scenes) stay 4:3. The title screen and the stage map can be widened with art of your own (Video > Title art):
+files ending in _sides.png in your profile folder (where settings.ini is), such as
+title_sides.png and map_sides.png. They are made by a converter from art generated around
+the screen; they hold only the sides, as the game's own colour numbers, and the screen's
+tile layout to recognise it by: none of the game's picture. Your sides then appear with the
+screen from its first frame and fade and flash with it. Where the
 picture goes from 4:3 to wide (the Prologue after its story scene, a scrolling room after a
 vertical one) it grows out to the sides over a moment. Turning it on takes effect from the
 next room. Widescreen is off in RetroAchievements' hardcore mode. The game was not made for
