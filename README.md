@@ -22,11 +22,20 @@ options to the in-game menu's Video page (F1 / Back):
 - **Wide menus** (on by default): the file select menus go widescreen too, with their wavy
   background carried on seamlessly to the sides. Screens whose art doesn't repeat (the title
   screen, story scenes) stay 4:3.
+- **Title art** (on by default, with widescreen): your own art beside still screens such as
+  the title and the stage map. Put `title_sides.png`, `map_sides.png` and so on in your
+  profile folder: 396 x 225, the screen's picture in the middle and 70 columns of art each
+  side. The game recognises each screen by its middle and makes your sides fade and flash
+  with it. Your art stays on your PC and is never part of a release.
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
 - **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as
   the burning town's sky, is drawn as the colour it stands for. Hand-drawn texture is left as
   it is.
+
+Widescreen also keeps the HUD and a boss's health bar at the screen's edges, brings enemies
+in from beyond the wider edges, and carries on scenery the game drew only as wide as the
+4:3 screen (Stage 2's bridge).
 
 Smooth fades and Smooth dithering change only the picture: the game plays the same, and save
 states are unaffected. See [docs/PLAYER_README.txt](docs/PLAYER_README.txt) for details.
@@ -63,7 +72,7 @@ ISO/WAV/BIN tracks); everything derived from it goes to `work/`, which is git-ig
 - Rewinding up to 30 min that works like the Konami Castlevania collections
 - Compatible with the original PC Engine version, English patched, Wii, and Wii U versions
 - Full suite of video options including filters and screen effects
-- 16:9 widescreen, with level ends and menus filled in rather than black
+- 16:9 widescreen, with level ends and menus filled in rather than black, and your own art beside the title and stage map
 - Smooth fades and smooth dithering
 - Save stating
 - Cheats
