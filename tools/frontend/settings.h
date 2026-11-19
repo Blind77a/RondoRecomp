@@ -24,7 +24,6 @@ typedef struct Settings {
     int effect;            /* EFFECT_*: scanlines, a CRT (flat or curved), composite */
     int effect_strength;   /* STRENGTH_* */
     int sides;             /* SIDES_*: what fills a wide screen beside the picture */
-    bool widescreen;       /* rooms that scroll sideways shown as wide as the screen (wide.h) */
     /* gameplay */
     int skip;              /* SKIP_*: story cinematics */
     bool rewind;

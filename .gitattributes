@@ -3,3 +3,5 @@
 Containerfile text eol=lf
 AppRun text eol=lf
 *.desktop text eol=lf
+# read by the packaging scripts (RONDO_VERSION, RONDO_ZIG_VERSION), in WSL too
+tools/frontend/programs.h text eol=lf

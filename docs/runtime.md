@@ -189,75 +189,16 @@ with photographs of it counting.
 
 Modules: `input.c` (mapping, macros, menu navigation), `menu.c` (pages, persisted to
 `settings.ini` by `settings.c`), `video.c` (placement and filtering), `game.c` (what the
-frontend knows about the game: main state, cheats, run), `prompt.c` (the title's prompt) and
-`wide.c` (widescreen); the last three are also linked into `rondo_headless`.
-
-Widescreen (`wide.c`, `runtime/pce/video.c`; Video, Widescreen, on by default, off in
-hardcore mode): in rooms the camera scrolls sideways through, the picture is the game's 256
-pixels plus `ext` each side (what fills the window at the chosen aspect: 42 at 16:9 and
-4:3, at most 56), drawn at the same pixel shape (`video.c` places a 340-pixel picture as
-16:9). The game's camera and everything it decides from it (walls, doors, room changes, boss
-arenas, what spawns when) is untouched; only the picture moves, like a modern game's camera
-that stops at the walls: centered on the game's 256 pixels, it slides up to `ext` toward
-the room's interior where a wall would come into view, so a stage starts with Richter at the
-picture's left and a room ends with its door at its right edge. The walls are the camera's
-limits at their widest since the room started: a boss arena closing in on the camera (Stage
-1's wyvern) keeps the wider picture, showing the room the player came through. Rooms
-narrower than the picture get a narrower one (one screen wide: the game's own 4:3 picture).
-- Decided after each frame for the next (`wide_after_frame`), from where the next picture
-  shows the camera: the game copies each layer's X late in a frame for the next picture's
-  raster bands ($1E39 / $1E42, see docs/findings.md; only the low 9 bits count, as some
-  rooms keep them modulo 512), and the VDC is told (`vdc_set_wide`) the X scroll each layer's
-  band will have, so each row is drawn from where its own layer's band starts. Kept in the
-  machine state (`Vdc.wide_state`, 16 bytes that held widescreen's settings until 0.13), so
-  a loaded state or rewind carries on with the picture as it was.
-- A parallax layer's art reaches only as far as the game ever shows it, so its band is
-  placed like the picture between its own walls: the camera's, times the layer's rate. The
-  rate is read from the velocities the game sets each frame ($1E7E / $1E86: a layer's share
-  of the camera's, less the drift it has while the camera is still); a slow layer that moves
-  less than the wider picture needs stays centered between its walls. Its band moves there no
-  faster than the picture glides.
-- Within a room the extension grows or shrinks 2 pixels a frame and a change of the walls
-  glides; a room's start, a camera jump or a blanked screen (a room being drawn: its temporary
-  camera steps across the level) starts afresh. Through a door (`$31` = 03 with `$84` 1-3)
-  the picture is held as it was, since the next room's start redraws the map over a dozen
-  frames with the picture showing; then it glides into the new room, or grows 2 pixels a side
-  a frame out of a 4:3 room's picture.
-- The Prologue's carriage chase (area $0A / $0B) is one screen, but its scenery loops round
-  the whole map: when its title shows (`$31` = 05) the picture grows out of 4:3 a pixel each
-  side a frame, centered. Its rain (object kind $26) is cycled around X 0-255 and drawn wrapping
-  (`VDC_SPRITE_WRAP`: also 256 pixels either side).
-- Sprites: the sprite builder's VRAM writes tag each sprite table entry with the object
-  being drawn (zp `$D9`; `vdc_set_sprite_kinds`): the HUD and the sub-weapon icon stay at the
-  picture's left as in the game's, a boss's health gauge (fixed to the screen at X 216) as far
-  from its right, other objects fixed to the screen (a stage's title) are centered, objects
-  moving with a parallax layer move with its band, the rest with the level. A wider picture
-  draws past the hardware's 16 sprites a line.
-- The game changes (byte patches, each checked against the original bytes, put in as a room
-  starts for rooms that scroll sideways, out for all others and outside gameplay): the
-  background columns are streamed 112 px out instead of 64 (drawn at both distances, as some
-  layers start drawn to 64 only); both room starts draw the map where the wider drawing needs
-  it (6F:A94C all 16 columns from 128 px left; 6F:A9B1 still the whole map from the camera,
-  its columns started 48 px further left: Stage 2's hedges under the bridge are drawn only
-  there); rows drawn while scrolling up or down cover the whole map; objects spawn 128 px out
-  instead of 64, keep moving to 128 px and are removed past 192 px (past 128 again, the game's
-  own, while it goes through a door or off a room's edge: it waits there until no enemy is
-  left, and objects it would have removed already would hold it up for good); generators
-  fixed at the old spawn edge move to the new one; the sprite builder lets pieces through
-  from -112 to 256 + 112. States from 0.11-0.12 holding that version's sprite changes are put
-  back first. `rondo_headless --wide 42 --wide-log A:B` shows each frame's decision.
-- The Super Castlevania IV whip (`moves.c`) is drawn over the picture at the game's screen X
-  less the picture's left edge (`vdc_picture_x0`).
-- `video.c` keeps its sharp copy and effect buffer at the widest picture's size and draws into
-  part of them, so a picture growing or shrinking a few columns a frame does not make new
-  multi-megapixel textures every frame. `rondo.log` counts frames that came over 1.5 frame
-  times after the last (`frames late`), for telling the game's pacing from a recorder's.
+frontend knows about the game: main state, cheats, run) and `prompt.c` (the title's prompt);
+the last two are also linked into `rondo_headless`.
 
 Video: aspect 4:3 / square pixels / stretch, fit or whole multiples, filters Sharp (nearest
 upscale to a whole factor into a render target, then linear to the final size), Nearest and
 Smooth. On wide screens the sides show the picture blurred (downscaled to 16x14, scaled up
 linearly, dimmed). The window is high-DPI aware, so fullscreen renders at the display's
-native resolution (e.g. 3840x2160). Frames are paced at 59.83 Hz by the frame timer. VSync
+native resolution (e.g. 3840x2160). Frames are paced at 59.83 Hz by the frame timer
+(`rondo.log` counts frames that came over 1.5 frame times after the last, `frames late`,
+for telling the game's pacing from a recorder's). VSync
 (on by default; `set_vsync`, `SDL_SetRenderVSync` 1, adaptive if that is refused) shows each
 on the screen's refresh, so it never tears; the timer still sets the pace, so on a 60 Hz
 screen about one frame in 350 is shown twice. Test runs turn it off to run uncapped.
@@ -512,12 +453,7 @@ prompt as rondo.exe shows it), `--row-scroll A:B` (each frame's bands of rows by
 instruction changes those work-RAM bytes; interpreter), `--vram-watch LO:HI` (which
 instructions write that VRAM range), `--dump-mem FRAME:FILE` (all 256 banks + MPRs, for
 disassembly), `--dump-vram FRAME:FILE`, `--dump-adpcm FRAME:FILE` (the 64 KiB of ADPCM RAM), `--dump-sat FRAME` (sprite table), `--scroll-log FILE`
-(scroll registers mid-screen per frame), `--wide N` (widescreen, N pixels a side, as
-rondo.exe decides it; the PNGs are the wider picture), `--wide-log A:B` (each frame's picture:
-its extension, left edge, camera, limits, the layers' offsets), `--wide-report FRAME` (which
-widescreen changes are in), `--wide-skip MASK` (leave changes out, for finding which one
-does what; bit i = change i). With `RONDO_VRAM_LOG` set, `--vram-watch` also prints each
-write. Button
+(scroll registers mid-screen per frame). Button
 names for `--press` are lower case: `i`, `ii`, `select`, `run`, `up`, `down`, `left`, `right`.
 
 The interpreter runs at about 2,600 frames per second (~43× real time).

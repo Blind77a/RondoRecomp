@@ -205,15 +205,6 @@ states, choose the slot, reset, back to the start screen, quit, and:
 Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            VSync: on (the default), each frame is shown when the screen refreshes, so the
            picture never tears; off shows it at once
-           Widescreen: on (the default), rooms that scroll sideways fill a wide screen
-           (16:9 shows 42 more of the game's pixels on each side). The view stops at a
-           room's walls like a modern game's camera: a stage starts with Richter at the
-           left of a wider view, enemies come into it from further away, and at the end
-           of a room its wall or door is at the edge of the screen; through a door the
-           view glides into the next room. A boss arena in a wider room stays wide, and
-           the Prologue's carriage chase widens out as its title shows. Rooms one screen
-           wide (towers, shafts) stay 4:3. Off in RetroAchievements' hardcore mode (it
-           changes how far out enemies appear)
            Aspect ratio: 4:3 (as on a TV), square pixels, or stretched to fill the screen
            Size: Fit screen (as big as the screen allows), or Whole multiples (every game
            pixel the same size; leaves a border)
@@ -295,9 +286,9 @@ remembers the choice (in setup.ini next to it; on Linux in
 ~/.local/share/RondoRecomp/install). "RondoRecomp Setup.exe" --4:3 or --wide
 chooses for that one run (on Linux: the AppImage with --setup --4:3 or --setup --wide).
 The game opens in a 4:3 window (960 x 720, smaller if the screen is) and F11 or Menu,
-Video, Fullscreen fills the whole screen. On a 4:3 screen the picture fills it as on a TV:
-Widescreen only shows more of a room on a screen wider than 4:3. The start screen puts the
-title above the menu, and the menu's pages grow to the screen's height.
+Video, Fullscreen fills the whole screen. On a 4:3 screen the picture fills it as on a TV.
+The start screen puts the title above the menu, and the menu's pages grow to the screen's
+height.
 
 Japanese and English
 --------------------

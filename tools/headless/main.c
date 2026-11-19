@@ -13,7 +13,6 @@
 #include "../frontend/game.h"
 #include "../frontend/moves.h"
 #include "../frontend/prompt.h"
-#include "../frontend/wide.h"
 #include "recomp/recomp.h"
 #include "../recomp/capture_script.h"
 #include "util/png.h"
@@ -103,12 +102,8 @@ static void vram_watch(Pce *p)
         vw_last_mawr = m;
         long f = (long)p->frame;
         /* a data write advances the address from where it was */
-        if (f >= vw_from && f < vw_to && prev >= vw_lo && prev <= vw_hi && (uint16_t)(m - prev) <= 128) {
+        if (f >= vw_from && f < vw_to && prev >= vw_lo && prev <= vw_hi && (uint16_t)(m - prev) <= 128)
             vw_count[(uint32_t)ww_prev_bank << 16 | ww_prev_pc]++;
-            if (getenv("RONDO_VRAM_LOG"))   /* each write: where, what, and the camera */
-                printf("  [vram %04X] f%ld l%03d %02X:%04X  %04X  cam %X%02X\n", prev, f, p->line, ww_prev_bank, ww_prev_pc,
-                       p->vdc.vram[prev & 0x7FFF], p->wram[0x1E96] & 15, p->wram[0x1E08]);
-        }
     }
 }
 
@@ -213,9 +208,6 @@ int main(int argc, char **argv)
     long rows_from = -1, rows_to = -1;   /* --row-scroll A:B: each frame's bands of rows by X scroll */
     long sat_at[8]; /* --dump-sat FRAME: print the sprite table after that frame */
     int n_sat = 0;
-    static Wide wide;                    /* --wide N: widescreen, N pixels a side (rondo.exe's) */
-    long wide_report_at = -1;            /* --wide-report FRAME: which widescreen changes are in */
-    long wide_log_from = -1, wide_log_to = -1;   /* --wide-log A:B: each frame's picture */
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atol(argv[++i]);
         else if (!strcmp(argv[i], "--shot-every") && i + 1 < argc) shot_every = atol(argv[++i]);
@@ -293,10 +285,6 @@ int main(int argc, char **argv)
         }
         else if (!strcmp(argv[i], "--row-scroll") && i + 1 < argc) sscanf(argv[++i], "%ld:%ld", &rows_from, &rows_to);
         else if (!strcmp(argv[i], "--dump-sat") && i + 1 < argc && n_sat < 8) sat_at[n_sat++] = atol(argv[++i]);
-        else if (!strcmp(argv[i], "--wide") && i + 1 < argc) wide.want = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--wide-report") && i + 1 < argc) wide_report_at = atol(argv[++i]);
-        else if (!strcmp(argv[i], "--wide-skip") && i + 1 < argc) wide_debug_skip = (uint32_t)strtoul(argv[++i], NULL, 16);
-        else if (!strcmp(argv[i], "--wide-log") && i + 1 < argc) sscanf(argv[++i], "%ld:%ld", &wide_log_from, &wide_log_to);
         else if (!strcmp(argv[i], "--vram-watch") && i + 1 < argc) {
             if (sscanf(argv[++i], "%x:%x", &vw_lo, &vw_hi) == 2) vw_count = calloc(1u << 24, sizeof *vw_count);
         }
@@ -425,20 +413,7 @@ int main(int argc, char **argv)
         pce.pad = moves_pad(&moves, &pce, &move_opts, pce.pad, pce.pad & PAD_II);
         if (prompt_dev >= 0) prompt_before_frame(&tp, &pce);
         moves_before_frame(&moves, &pce, &move_opts, true);
-        if (wide.want) wide_before_frame(&wide, &pce);
         pce_run_frame(&pce);
-        if (wide.want) {
-            wide_after_frame(&wide, &pce);
-            if (f + 1 >= wide_log_from && f + 1 <= wide_log_to) {
-                const uint8_t *r = pce.wram, *st = pce.vdc.wide_state;
-                printf("wide %ld: drawn %d a side, left edge %d; cam %03X limits %03X-%03X%s; next %d/%d%s layers",
-                       f + 1, wide.active, wide.x0, (r[0x1E96] & 15) << 8 | r[0x1E08], (r[0x1EBE] & 15) << 8,
-                       (r[0x1EC6] & 15) << 8 | r[0x1EC7], wide.patched ? "" : " (changes out)", st[1], (int8_t)st[2],
-                       st[3] & 1 ? " gliding" : "");
-                for (int k = 1; k < 8; k++) printf(" %d", (int8_t)st[3 + k]);
-                printf("\n");
-            }
-        }
         if (prompt_dev >= 0) prompt_after_frame(&tp, &pce);
         moves_after_frame(&moves, &pce, &move_opts, true);
         game_apply_cheats(&pce, &cheats, &gw);
@@ -475,12 +450,6 @@ int main(int argc, char **argv)
                 y = e + 1;
             }
             printf("\n");
-        }
-        if (wide_report_at == f + 1) {
-            char rep[4096];
-            wide_report(&pce, rep, sizeof rep);
-            printf("widescreen changes after frame %ld (state %02X, drawn %d a side):\n%s", f + 1, pce.wram[0x30],
-                   wide.active, rep);
         }
         for (int i = 0; i < n_sat; i++)
             if (sat_at[i] == f + 1) {

@@ -191,7 +191,6 @@ static bool gather(Moves *m, Pce *p)
         int pattern = (s[2] >> 1) & 0x3FF;
         if (pattern < WHIP_PATTERNS || pattern >= WHIP_PATTERNS + 16) continue;
         int sx = (s[1] & 0x3FF) - 32, sy = (s[0] & 0x3FF) - 64;
-        if (sx >= 512 - 32) sx -= 1024;   /* (left of the screen: in a wider picture, in it) */
         int w = attr & 0x0100 ? 32 : 16, cgy = (attr >> 12) & 3, h = cgy == 0 ? 16 : cgy == 1 ? 32 : 64;
         if (sx + w <= px - 96 || sx >= px + 96 || sy + h <= py - 80 || sy >= py + 16) continue;
         int base = pattern & ~(w == 32 ? 1 : 0) & ~(h == 32 ? 2 : h == 64 ? 6 : 0);
@@ -231,26 +230,24 @@ static bool gather(Moves *m, Pce *p)
     return true;
 }
 
-/* the window's pixels turned `dir` eighths of a turn around the hand, into the picture (screen
- * x px in its column px - x0: a wider picture starts left of the game's screen) */
+/* the window's pixels turned `dir` eighths of a turn around the hand, into the picture */
 static void draw_turned(const Moves *m, Pce *p)
 {
     Vdc *d = &p->vdc;
     const uint32_t *argb = &p->vce.argb[0x100];
-    int x0 = vdc_picture_x0();
     float a = (float)m->dir * PI_4, c = cosf(a), s = sinf(a);
     for (int y = 0; y < MOVES_WIN_H; y++) {
         int py = m->win_y + y;
         if (py < 0 || py >= d->fb_h) continue;
         for (int x = 0; x < MOVES_WIN_W; x++) {
             int px = m->win_x + x;
-            if (px - x0 < 0 || px - x0 >= d->fb_w) continue;
+            if (px < 0 || px >= d->fb_w) continue;
             float f = (float)((px - m->pivot_x) * m->facing), u = (float)(m->pivot_y - py);
             float f0 = f * c + u * s, u0 = u * c - f * s;
             if (f0 < -1.5f) continue;                       /* (only what is ahead of the hand) */
             int sx = m->pivot_x + (int)lroundf(f0) * m->facing - m->win_x, sy = m->pivot_y - (int)lroundf(u0) - m->win_y;
             if (sx < 0 || sx >= MOVES_WIN_W || sy < 0 || sy >= MOVES_WIN_H || !m->win[sy][sx]) continue;
-            d->fb[py * PCE_FB_MAX_W + px - x0] = argb[m->win[sy][sx]];
+            d->fb[py * PCE_FB_MAX_W + px] = argb[m->win[sy][sx]];
         }
     }
 }
@@ -385,7 +382,6 @@ static void draw_limp(const Moves *m, Pce *p)
 {
     Vdc *d = &p->vdc;
     const uint32_t *argb = &p->vce.argb[0x100];
-    int pic_x0 = vdc_picture_x0();                    /* (as in draw_turned) */
     int len = whip_length(m);
     if (len < TIP + LINK) return;
     float x = (float)m->pivot_x, y = (float)m->pivot_y;
@@ -398,14 +394,14 @@ static void draw_limp(const Moves *m, Pce *p)
         for (int py = y0; py <= y1; py++) {
             if (py < 0 || py >= d->fb_h) continue;
             for (int px = x0; px <= x1; px++) {
-                if (px - pic_x0 < 0 || px - pic_x0 >= d->fb_w) continue;
+                if (px < 0 || px >= d->fb_w) continue;
                 float df = ((float)px - x) * (float)m->facing, du = y - (float)py;
                 float fl = df * c + du * sn, ul = du * c - df * sn;
                 if (fl < -0.5f || fl >= l - 0.5f || fabsf(ul) > w) continue;
                 int sx = m->pivot_x + (src + (int)lroundf(fl)) * m->facing - m->win_x;
                 int sy = m->pivot_y - (int)lroundf(ul) - m->win_y;
                 if (sx < 0 || sx >= MOVES_WIN_W || sy < 0 || sy >= MOVES_WIN_H || !m->win[sy][sx]) continue;
-                d->fb[py * PCE_FB_MAX_W + px - pic_x0] = argb[0x10 | (m->win[sy][sx] & 0xF)];   /* (not flashing) */
+                d->fb[py * PCE_FB_MAX_W + px] = argb[0x10 | (m->win[sy][sx] & 0xF)];   /* (not flashing) */
             }
         }
         x = ex;

@@ -68,12 +68,6 @@ Findings so far: [docs/findings.md](docs/findings.md).
   and the System Card functions the game uses, reimplemented in C (no BIOS needed).
 - A gothic start screen (a candlelit town at night under a pale moon) and menus in arched
   gold-and-umber frames with blackletter titles, with controller, keyboard and mouse.
-- Widescreen (on by default): rooms that scroll sideways fill a 16:9 screen, with a camera
-  that stops at the room's walls like a modern game's (a stage starts with Richter at the left
-  of a wider view; a room ends with its door at the edge), enemies in view from further out
-  and parallax layers that keep their own pace. The game's own camera, walls, doors and boss
-  arenas are left exactly as they were: only the picture is wider (boss arenas and the
-  Prologue's carriage chase included). One-screen rooms such as towers and shafts stay 4:3.
 - An in-game menu (F1 / Back): video modes for 4K, 16:9 and ultrawide screens (4:3 with
   blurred sides, square pixels, stretch, integer scaling, sharp filtering), cinematic
   skipping, cheats (infinite health, hearts, lives), modern controller layout with

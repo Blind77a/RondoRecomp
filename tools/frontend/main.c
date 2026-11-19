@@ -36,7 +36,6 @@
 #include "showcase.h"
 #include "theme.h"
 #include "video.h"
-#include "wide.h"
 #include "fit.h"
 #include "moves.h"
 #include "prompt.h"
@@ -158,7 +157,6 @@ static bool no_save_files;   /* test runs: fresh backup RAM, nothing written to 
 static TitlePrompt prompt;   /* the title's PUSH RUN BUTTON! as this PC's button (pad set per frame) */
 static Moves moves;          /* the Gameplay page's 8-way whip and limp whip (moves.h) */
 static MoveOptions move_opts;   /* this frame's: off in hardcore mode and the tests */
-static Wide wide;            /* widescreen: the picture decided around every frame (wide.h) */
 
 /* A frame of the game. While rewinding (`live` false) the moves only draw: the frame shown is
  * one already played. */
@@ -166,24 +164,18 @@ static void run_frame_as(bool live)
 {
     prompt_before_frame(&prompt, &pce);
     moves_before_frame(&moves, &pce, &move_opts, live);
-    wide_before_frame(&wide, &pce);
     pce_run_frame(&pce);
-    wide_after_frame(&wide, &pce);
     prompt_after_frame(&prompt, &pce);
     moves_after_frame(&moves, &pce, &move_opts, live);
 }
 
 static void run_frame(void) { run_frame_as(true); }
 
-/* columns the last frame's picture has on each side of the game's 256 */
-static int frame_wide(void) { return pce.vdc.fb_w == 256 + 2 * wide.active ? wide.active : 0; }
-
 /* the frontend's own bookkeeping, after a state load, a rewind or a restart */
 static void watch_reset(void)
 {
     game_watch_reset(&gw, &pce);
     moves_reset(&moves);
-    wide_reset(&wide);
 }
 
 typedef struct Session {
@@ -1162,13 +1154,6 @@ int main(int argc, char **argv)
         bool hardcore = ach_hardcore();
         if (hardcore) memset(&cheats, 0, sizeof cheats);   /* RetroAchievements' hardcore mode: none */
         move_opts = (MoveOptions){set.eight_way && !hardcore && !test_mode, set.limp_whip && !hardcore && !test_mode};
-        {   /* widescreen fills the window's shape (not in hardcore mode: it changes how far out
-             * the game's objects start and stay) */
-            int ww, wh;
-            SDL_GetRenderOutputSize(ren, &ww, &wh);
-            wide.want = set.widescreen && !hardcore && wh > 0
-                            ? wide_extent((double)ww / (double)wh, video_picture_aspect(&set)) : 0;
-        }
         bool rewinding = false, ran_frame = false;
         if (menu_on_start_screen(&menu)) {
             /* the start screen: the game waits for Play (nothing runs, nothing sounds) */
@@ -1315,7 +1300,7 @@ int main(int argc, char **argv)
         }
 
         /* video */
-        video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, frame_wide());
+        video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
         if (features_dir && !t_shots && pce.frame >= 17880) {
             /* screenshots: 16:9 window with each picture mode and screen effect, then the menu
              * pages */
@@ -1588,7 +1573,7 @@ int main(int argc, char **argv)
                     pce.pad = moves_pad(&moves, &pce, &on, pad, attack);
                     if (attack) up_seen |= pce.pad & PAD_UP;
                     run_frame();
-                    video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, frame_wide());
+                    video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
                     char path[1200];
                     if (moves.draw && moves.dir == 2) {
                         up_frames++;
