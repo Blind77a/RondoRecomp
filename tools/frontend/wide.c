@@ -44,6 +44,7 @@ static const uint8_t RTS_FILLER[96] = {
      0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60}
 
 #define E WIDE_MAX         /* every patch is made for the widest supported view */
+#define WIDE_STREAMED 64   /* the widest a side shows (wide_extent: background drawn there) */
 #ifndef STREAM
 #define STREAM 0x50        /* columns streamed this far past the edge (see patches[0]) */
 #endif
@@ -268,6 +269,17 @@ static const Patch patches[] = {
 #define DRAW_PATCHES (((1u << N_PATCHES) - 1) & ~WORLD_PATCHES & ~OBJECT_PATCHES)   /* the rest */
 /* objects reach further out only for a picture wider than the 64 px they already reach */
 #define OBJECT_REACH 64
+/* How far past the 4:3 screen objects are made and start moving in a widened room: the
+ * picture's extension and a margin for wide sprites drawn around their X (the broken
+ * bridge's sections and statues, 64 px and more), at most 120 (the game removes objects 128
+ * px out). With the game's 64 (or the 72 used before), they appeared in the picture's edges
+ * as they were made. */
+#define OBJECT_MARGIN 50
+static int object_reach(int ext)
+{
+    int d = ext + OBJECT_MARGIN;
+    return d < 0x40 ? 0x40 : d > 0x78 ? 0x78 : d;
+}
 /* enemies sent in from just past the screen's edges start at most this far out (wide_frame) */
 #define EDGE_SPAWN_MAX 80
 
@@ -363,6 +375,10 @@ int wide_extent(double window_aspect, double picture_aspect)
     int e = (int)floor((w - 256.0) / 2.0);
     if (e < 0) e = 0;
     if (e > WIDE_MAX) e = WIDE_MAX;
+    /* no further than the game has its background drawn: columns 32 px wide streamed STREAM
+     * px past the edge when the camera crosses one, so (STREAM / 32) * 32 = 64 px are always
+     * there; at 70 the last 6 px showed what the map held before every 32 px walked */
+    if (e > WIDE_STREAMED) e = WIDE_STREAMED;
     return e & ~1;
 }
 
@@ -471,6 +487,10 @@ static const uint8_t ROOM_START_B[] = {0xA4, 0x45, 0xB9, 0x94, 0xA9, 0x82};   /*
  * jumping, or three or more of a kind standing exactly 128 px apart (the bridge pillars, so
  * their first time round is covered too). Forgotten as a room starts. */
 static bool recycled[256];
+static bool jumped[256];          /* a kind seen moved round (recycled for the room) */
+static uint32_t row_sig[256];     /* find_rows: each kind's slots, ... */
+static int row_travel[256];       /* ... and the camera's net move since they changed */
+static int rows_cam;              /* the camera last frame (find_rows) */
 static bool scenery_rows[64];   /* map rows seen scrolled apart from the playfield (this room) */
 
 static int edge_shift(int left, int right, int ext);
@@ -517,9 +537,12 @@ static void on_entry(Pce *p, void *ctx)
     }
     var_value[VAR_ROOM_START] = start;
     memset(recycled, 0, sizeof recycled);
+    memset(jumped, 0, sizeof jumped);
+    memset(row_sig, 0, sizeof row_sig);
+    memset(row_travel, 0, sizeof row_travel);
     memset(scenery_rows, 0, sizeof scenery_rows);
     set_patches(p, WORLD_PATCHES, w->want > 0 && scrolls);
-    set_patches(p, OBJECT_PATCHES, (w->want > OBJECT_REACH || (w->edges && w->want > 0)) && scrolls);
+    set_patches(p, OBJECT_PATCHES, w->want > 0 && scrolls);
     update_vars(p);
 }
 
@@ -618,11 +641,28 @@ static bool menu_sides(Pce *p, int ext)
 /* a row: every object of a kind (not fixed to the screen), three or four of them, standing
  * exactly 128 px apart (the bridge pillars; not, say, a splash's many particles, three of
  * which can happen to be 128 px apart) */
-static void find_rows(const uint8_t *r)
+static void find_rows(const uint8_t *r, int cam_step)
 {
+    /* each kind's objects (which slots hold it) and how far the camera has gone since they
+     * last changed: a row the game moves round keeps its objects; pillars it makes and
+     * removes as the camera goes (the broken bridge's, kind $A0) change them within 128 px */
+    uint32_t sig[256] = {0};
+    for (int i = 0; i < OBJ_SLOTS; i++)
+        if (r[OBJ_KIND + i]) sig[r[OBJ_KIND + i]] = sig[r[OBJ_KIND + i]] * 31u + (uint32_t)i + 1u;
+    /* (row_travel: the camera's net move since then, so going back and forth does not add
+     * up: pillars made 128 px apart cannot get 160 px away without a new one) */
+    for (int k = 1; k < 256; k++) {
+        if (sig[k] != row_sig[k]) {
+            row_sig[k] = sig[k];
+            row_travel[k] = 0;
+            if (!jumped[k]) recycled[k] = false;   /* (a kind seen made or removed: not a row) */
+        } else if (row_travel[k] > -10000 && row_travel[k] < 10000) {
+            row_travel[k] += cam_step;
+        }
+    }
     for (int i = 0; i < OBJ_SLOTS; i++) {
         uint8_t k = r[OBJ_KIND + i];
-        if (!k || recycled[k] || (r[OBJ_FLAGS + i] & 1)) continue;
+        if (!k || recycled[k] || (row_travel[k] < 160 && row_travel[k] > -160) || (r[OBJ_FLAGS + i] & 1)) continue;
         int xs[5], n = 0;
         bool fixed = false;
         for (int j = 0; j < OBJ_SLOTS && n <= 4; j++) {
@@ -636,7 +676,7 @@ static void find_rows(const uint8_t *r)
                 int t = xs[b]; xs[b] = xs[b - 1]; xs[b - 1] = t;
             }
         bool row = true;
-        for (int a = 1; a < n; a++) row &= xs[a] - xs[a - 1] == 128;
+        for (int a = 1; a < n; a++) row &= xs[a] - xs[a - 1] <= 130 && xs[a] - xs[a - 1] >= 126;
         if (row) recycled[k] = true;
     }
 }
@@ -651,6 +691,40 @@ static int edge_shift(int left, int right, int ext)
     if (shift > ext) shift = ext;
     if (shift < -ext) shift = -ext;
     return shift;
+}
+
+/* The game moves a pillar round by 383 px, not 384, so after it the row stands 127 / 129 px
+ * apart, and the copies 256 px either side land a pixel off the pillars they meet at the
+ * picture's edges (a pillar seen twice, a pixel apart). Each row is kept exactly 128 px
+ * apart: a pillar a pixel or two out of step with the rest is put back in step (scenery: a
+ * pixel unseen in the 4:3 picture, where the moving round happens). */
+static void align_rows(uint8_t *r)
+{
+    for (int k = 1; k < 256; k++) {
+        if (!recycled[k]) continue;
+        int slot[5], phase[5], n = 0;
+        for (int i = 0; i < OBJ_SLOTS && n < 5; i++) {
+            if (r[OBJ_KIND + i] != k || (r[OBJ_FLAGS + i] & 1)) continue;
+            slot[n] = i;
+            phase[n++] = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8) & 127;
+        }
+        if (n < 3 || n > 4) continue;
+        /* the phase most of the row has */
+        int best = phase[0], most = 0;
+        for (int a = 0; a < n; a++) {
+            int c = 0;
+            for (int b = 0; b < n; b++) c += phase[b] == phase[a];
+            if (c > most) { most = c; best = phase[a]; }
+        }
+        if (most < 2) continue;
+        for (int a = 0; a < n; a++) {
+            int d = ((best - phase[a] + 64) & 127) - 64;   /* (-64..63) */
+            if (d == 0 || d < -2 || d > 2) continue;
+            int i = slot[a], x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8) + d;
+            r[OBJ_XL + i] = (uint8_t)x;
+            r[OBJ_XH + i] = (uint8_t)(x >> 8);
+        }
+    }
 }
 
 /* ---- scenery ------------------------------------------------------------------------ */
@@ -721,8 +795,11 @@ static bool scenery_fill(Pce *p, int cam)
             while (l < mw && blank[r][(c + l) & (mw - 1)]) l++;
             if (l > best_l) { best_l = l; best_s = c; }
         }
-        /* (a stretch the art leaves out is long; gaps between clouds and hills are short) */
-        if (best_l < SCENERY_MIN_GAP || best_l >= mw) continue;
+        /* (a stretch the art leaves out is long; gaps between clouds and hills are short; and
+         * a band is mostly drawn: not a row that is empty but for a tower, say) */
+        int drawn = 0;
+        for (int c = 0; c < mw; c++) drawn += !blank[r][c];
+        if (best_l < SCENERY_MIN_GAP || best_l >= mw || drawn * 2 < mw) continue;
         int half = (best_l + 1) / 2;
         uint16_t e = TILE(r, best_s - 1);
         for (int k = 0; k < half && (e = pair_next_n(e, false, true)) != VDC_SIDE_NONE; k++) {
@@ -752,6 +829,18 @@ void wide_frame(Wide *w, Pce *p)
     /* outside gameplay the game is as it was; rooms put the changes back as they start */
     undo_old_patches(p);
     if (s != RONDO_PLAYING) set_patches(p, WORLD_PATCHES | OBJECT_PATCHES, false);
+    /* a save state made in a widened room holds the object changes (their varying bytes not
+     * the game's own: theirs are 0x40/0xC0): taken as in, so they follow this frame's values */
+    if (!objects_on && s == RONDO_PLAYING) {
+        bool all = true, moved = false;
+        for (int i = 0; i < N_PATCHES; i++) {
+            if (!(OBJECT_PATCHES & 1u << i)) continue;
+            const uint8_t *m = at(p, &patches[i]);
+            all &= m && is_in(m, &patches[i]);
+            moved |= m && m[patches[i].var_at] != orig_of(&patches[i])[patches[i].var_at];
+        }
+        if (all && moved) objects_on = true;
+    }
     uint32_t in = patches_in(p);
     w->patched = (in & WORLD_PATCHES) == WORLD_PATCHES;
     bool objects_out = (in & OBJECT_PATCHES) == OBJECT_PATCHES;
@@ -868,7 +957,12 @@ void wide_frame(Wide *w, Pce *p)
      * their drops about 128 px either side). A banner or a generator does not move. */
     uint8_t *table = p->page[0x00] ? p->page[0x00] + PARKED_TABLE : NULL;
     uint8_t *echo = p->page[0x00] ? p->page[0x00] + ECHO_TABLE : NULL;
-    if (ext && s == RONDO_PLAYING) find_rows(r);
+    if (ext && s == RONDO_PLAYING) {
+        int cam_now = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL], st = wrap(cam_now - rows_cam);
+        rows_cam = cam_now;
+        find_rows(r, st < -32 || st > 32 ? 0 : st);
+        align_rows(r);
+    }
     for (int i = 0; i < OBJ_SLOTS; i++) {
         int16_t x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8);
         w->obj_still[i] = x == w->obj_x[i] ? (uint8_t)(w->obj_still[i] < 255 ? w->obj_still[i] + 1 : 255) : 0;
@@ -878,7 +972,7 @@ void wide_frame(Wide *w, Pce *p)
          * puts the copies where the next ones round would be */
         int jump = x - w->obj_x[i];
         if (r[OBJ_KIND + i] && r[OBJ_KIND + i] == w->obj_kind[i] && ((jump >= 376 && jump <= 392) || (jump <= -376 && jump >= -392)))
-            recycled[r[OBJ_KIND + i]] = true;
+            recycled[r[OBJ_KIND + i]] = jumped[r[OBJ_KIND + i]] = true;
         w->obj_x[i] = x;
         bool hud = i == HUD_SLOT || i == SUBWEAPON_SLOT;
         bool parked = any_parked && !hud && r[OBJ_FRAME + i] && x < 0 && w->obj_still[i] >= PARKED_FRAMES;
@@ -886,6 +980,19 @@ void wide_frame(Wide *w, Pce *p)
         bool weather = ext && !hud && r[OBJ_KIND + i] && (r[OBJ_FLAGS + i] & 1) && x >= 0 && x < 256 &&
                        w->obj_still[i] < ECHO_STILL_FRAMES;
         bool round = ext && !hud && r[OBJ_KIND + i] && !(r[OBJ_FLAGS + i] & 1) && recycled[r[OBJ_KIND + i]];
+        /* ...but not onto one of the row the game is hiding (frame 0: a pillar it leaves out
+         * where the bridge ends): the copy 256 px on would stand in for it there. (The other
+         * copy is 512 px from it, further than the picture is wide: never wanted at once.) */
+        for (int j = 0; round && j < OBJ_SLOTS; j++) {
+            if (j == i || r[OBJ_KIND + j] != r[OBJ_KIND + i] || r[OBJ_FRAME + j]) continue;
+            int xj = (int16_t)(r[OBJ_XL + j] | r[OBJ_XH + j] << 8), d = xj - x;
+            if ((d >= 254 && d <= 258) || (d <= -254 && d >= -258)) round = false;
+        }
+        /* ...nor near a room's end walls (the bridge's end piers stand where the next pillar
+         * would: the game only ever moves its pillars round out of the 4:3 picture's sight) */
+        if (round && scrolls && ((x + 256 > right - 96 && x + 256 < 256 + 2 * WIDE_MAX + 32) ||
+                                 (x - 256 < left + 96 && x - 256 > -2 * WIDE_MAX - 32)))
+            round = false;   /* (only a copy that would be seen: the other one may be wanted) */
         if (echo) echo[i] = weather || round;
     }
 
@@ -935,7 +1042,7 @@ void wide_frame(Wide *w, Pce *p)
      * 128 px out) */
     var_value[VAR_SPRITE_RIGHT] = var_value[VAR_ECHO_RIGHT] = (uint8_t)(0x20 + E + (shift > 0 ? shift : 0));
     var_value[VAR_SPRITE_LEFT] = (uint8_t)(0x100 - E - (shift < 0 ? -shift : 0));
-    int base = w->want > OBJECT_REACH ? 0x48 : 0x40;
+    int base = object_reach(w->want);
     int reach_r = shift > 0 ? ext + shift + 8 : 0, reach_l = shift < 0 ? ext - shift + 8 : 0;
     int dr = reach_r > base ? (reach_r < 0x78 ? reach_r : 0x78) : base;
     int dl = reach_l > base ? (reach_l < 0x78 ? reach_l : 0x78) : base;

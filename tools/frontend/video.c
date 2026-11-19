@@ -63,7 +63,7 @@ static SDL_FRect place(const Video *v, const Settings *s, int ww, int wh)
         float full_w = 256.0f + 2.0f * (float)(v->src_wide_full > v->src_wide ? v->src_wide_full : v->src_wide);
         float full_ar = s->aspect == ASPECT_SQUARE ? full_w / sh : 4.0f / 3.0f * full_w / 256.0f;
         float fill = ((float)ww / (float)wh) / full_ar;
-        if (fill > 1.0f && fill < 1.03f) ar *= fill;
+        if (fill > 1.0f && fill < 1.05f) ar *= fill;
     }
     float dh = (float)wh, dw = dh * ar;
     if (dw > (float)ww) { dw = (float)ww; dh = dw / ar; }
