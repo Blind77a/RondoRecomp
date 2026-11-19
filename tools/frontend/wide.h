@@ -40,6 +40,7 @@ typedef struct Wide {
     int shift;             /* the picture's shift this frame (vdc_set_wide_shift) */
     int menu_good;         /* frames in a row a menu's sides could be filled (to MENU_FRAMES) */
     int menu_bad;          /* ... and since then could not */
+    int menu_bxr, menu_moved;   /* a menu's sideways scroll last frame, frames it has not moved */
     int gen_r, gen_l;      /* screen-fixed generators moved this far out (0 = where the game
                             * put them, 64 px) */
     /* bookkeeping */

@@ -258,7 +258,11 @@ disc as it goes):
   and moving (a banner or a generator does not). Checked over 600 frames of the rain:
   game RAM unchanged, interpreter and recompiled pictures identical.
 - The HUD (slots $57, $56) is moved to the left edge of the widened picture (from anywhere
-  widescreen could have put it, so a save state from another session is put right). A boss's
+  widescreen could have put it, so a save state from another session is put right). Its
+  sprites are built during a frame and shown with the next, whose picture is shifted for the
+  camera as this frame leaves it, so with Level ends it is put again as the sprite building
+  starts (72:8000, through `Pce.on_entry`), the camera moved by then: put before the frame it
+  was a step behind and jittered by a pixel as the camera stepped 1 and 2 px. A boss's
   health bar (slot $55, type 5, sliding in from X 254 to 216) cannot be moved as an object
   (past 253 its own code slides it in again), so its sprites (patterns $1F8-$1FF) are drawn
   at the picture's right edge instead (`vdc_set_sprite_move`).
@@ -316,7 +320,11 @@ disc as it goes):
   so they carry on seamlessly; the title's clouds have no repeat and stay 4:3. Wide once
   97% of the side tiles fill for 8 frames in a row (`MENU_FRAMES`); then held with the last
   sides that filled for up to 60 frames that do not (`MENU_HOLD`: a page sliding over puts
-  its frames at the edges), so it does not flick to 4:3. `rondo_headless --wide-menus`.
+  its frames at the edges), so it does not flick to 4:3. While the menu's scroll moves (a page sliding
+  over: the map holds both pages side by side), the sides show the map's own entries wherever
+  the picture has not wrapped round the map, and sprites beside the 256 pixels too
+  (`vdc_set_side_real`), so the page coming in enters at the screen's edge and the one going
+  out leaves at the other. `rondo_headless --wide-menus`.
 - Title art (Video > Title art, on by default; `titleart.c`): the title's and the stage map's
   art has no repeat, so their sides come from the player's own files: any `*_sides.png` in
   the profile folder (up to 8), 396 x 228. They hold no picture of the game's: each side
