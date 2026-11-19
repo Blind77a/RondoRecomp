@@ -79,6 +79,7 @@ static const Item START_ITEMS[] = {
 static const Item VIDEO_ITEMS[] = {
     TOGGLE("Fullscreen", fullscreen, MENU_VIDEO_CHANGED),
     TOGGLE("VSync", vsync, MENU_VIDEO_CHANGED),
+    TOGGLE("Widescreen", widescreen, MENU_SETTINGS_CHANGED),
     CHOICE("Aspect ratio", aspect, ASPECTS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Size", scaling, SCALINGS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Filter", filter, FILTERS, 0, MENU_SETTINGS_CHANGED),
@@ -94,6 +95,7 @@ static const Item GAMEPLAY_ITEMS[] = {
     TOGGLE("Start screen at launch", start_screen, MENU_SETTINGS_CHANGED),
     TOGGLE("8-way whip and doves", eight_way, MENU_SETTINGS_CHANGED),
     TOGGLE("Limp whip", limp_whip, MENU_SETTINGS_CHANGED),
+    TOGGLE("Run", run, MENU_SETTINGS_CHANGED),
     {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
 };
 static const Item CHEAT_ITEMS[] = {
@@ -182,6 +184,7 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Start screen", "Leave the game for the start screen."},
     {"Fullscreen", "Use the whole screen at its own resolution (F11)."},
     {"VSync", "Show each frame when the screen refreshes: no tearing. Off: at once, maybe torn."},
+    {"Widescreen", "Rooms that scroll sideways fill a wide screen, up to their walls. Not in hardcore mode."},
     {"Aspect ratio", "4:3 as on a TV, square pixels, or stretched to fill."},
     {"Size", "As big as the screen allows, or whole multiples only."},
     {"Filter", "Sharp: crisp, even pixels. Nearest: raw. Smooth: softened."},
@@ -195,6 +198,7 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Start screen at launch", "Off: " GAME_PROGRAM " goes straight into the game."},
     {"8-way whip and doves", "Attack with a direction held aims the whip (or Maria's doves); Sub-weapon throws."},
     {"Limp whip", "Keep Attack held after a whip: it hangs from Richter's hand and the d-pad swings it."},
+    {"Run", "Hold the Run control (LB / S unless changed) to run, as in Symphony of the Night."},
     {"Infinite health", "Health never goes down."},
     {"Infinite hearts", "Hearts stay at 99."},
     {"Infinite lives", "Lives never run out."},
@@ -502,34 +506,58 @@ static const char *item_help(int page, const Item *it)
 
 /* Where everything goes for a page (layout units u: 1 at 960 x 540), shared by drawing and
  * the mouse. The start screen's own page has its panel on the right, the rose window and the
- * title on the left; the others are one panel in the middle. */
+ * title on the left; on a 4:3 (or 5:4) screen it is stacked instead, the rose window and the
+ * title above the panel. The others are one panel in the middle. */
 typedef struct Frame {
     int w, h;
     float u, cx, cy;
+    float top;                   /* the stacked start screen: the top of its 640 x 740 */
     float x0, x1, y0, y1;        /* the panel: y0 is its arch's apex */
     float rise;                  /* the arch's height */
     float title_y, sub_y, div_y, foot_y;
     float rows_top, row_h, text_px;
     bool start;
+    bool stacked;                /* the start screen, stacked */
 } Frame;
+
+/* The start screen is stacked on a screen narrower than this (4:3 is 1.33, 3:2 1.5): side by
+ * side it would leave bands above and below. */
+#define STACK_BELOW 1.4f
+
+/* The layout unit. A panel in the middle: th_unit's (1 at 960 x 540) on a 16:10 screen and
+ * wider; narrower, the panel (600 wide) grows toward the screen's height, to 1 at 680 x 540
+ * at 4:3. The start screen side by side: th_unit's; stacked: 1 at 640 x 740. */
+static float page_unit(int w, int h, bool start, bool stacked)
+{
+    if (w <= 0 || h <= 0) return 1;
+    float fw = (float)w, fh = (float)h;
+    if (stacked) return fminf(fw / 640.0f, fh / 740.0f);
+    if (start) return th_unit(w, h);
+    float t = (fw / fh - 4.0f / 3.0f) / (1.6f - 4.0f / 3.0f);   /* 0 at 4:3, 1 at 16:10 */
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    return fminf(fw / (680.0f + 280.0f * t), fh / 540.0f);
+}
 
 static Frame frame_for(const Menu *m, SDL_Renderer *ren)
 {
     Frame F;
     SDL_GetRenderOutputSize(ren, &F.w, &F.h);
-    float u = F.u = th_unit(F.w, F.h);
+    F.start = m->page == PAGE_START;
+    F.stacked = F.start && (float)F.w < STACK_BELOW * (float)F.h;
+    float u = F.u = page_unit(F.w, F.h, F.start, F.stacked);
     F.cx = (float)F.w * 0.5f;
     F.cy = (float)F.h * 0.5f;
-    F.start = m->page == PAGE_START;
+    F.top = F.cy - 370 * u;
     /* as tall as the page needs (arch and title, rows of 30, footer), at most 500 */
     int rows = PAGES[m->page].n;
     float head = F.start ? 78 : 92;
     float height = (head + 30 + (float)(rows - 1) * 30 + 18 + 54 + 12) * u;
     if (height > 500 * u) height = 500 * u;
-    F.x0 = F.start ? F.cx + 20 * u : F.cx - 300 * u;
-    F.x1 = F.start ? F.cx + 440 * u : F.cx + 300 * u;
-    F.y0 = F.cy - height * 0.5f + 6 * u;
-    F.y1 = F.cy + height * 0.5f + 6 * u;
+    F.x0 = F.start && !F.stacked ? F.cx + 20 * u : F.cx - 300 * u;
+    F.x1 = F.start && !F.stacked ? F.cx + 440 * u : F.cx + 300 * u;
+    F.y0 = F.stacked ? F.top + 226 * u : F.cy - height * 0.5f + 6 * u;
+    F.y1 = F.y0 + height;
     F.rise = 26 * u;
     F.title_y = F.y0 + 50 * u;
     F.sub_y = F.y0 + 75 * u;
@@ -654,7 +682,7 @@ static void draw_rows(SDL_Renderer *ren, const Frame *F, const Menu *m, const Se
         if (it->kind == IT_INFO) {
             const char *line = it->arg < 2 ? m->ach[it->arg] : m->upd[it->arg - 2];
             float w = (F->x1 - F->x0) - 80 * u;
-            if (it->arg == 4 && m->updating && m->upd_pct >= 0) {   /* the step's progress */
+            if (it->arg == 4 && m->updating && m->upd_pct >= 0) {   /* the whole update's progress */
                 float bx0 = F->x0 + 60 * u, bx1 = F->x1 - 60 * u, h = F->row_h * 0.16f;
                 float fill = bx0 + (bx1 - bx0) * (float)(m->upd_pct > 100 ? 100 : m->upd_pct) / 100.0f;
                 th_rect(ren, bx0, y - h, bx1, y + h, th_fade((SDL_Color){20, 16, 14, 220}, a));
@@ -769,29 +797,44 @@ static void draw_footer(SDL_Renderer *ren, const Frame *F, const Menu *m, float 
             th_fade(TH_TEXT_DIM, a), hint, 0.5f, 0.5f, 1.2f * u, TH_NONE);
 }
 
-/* The start screen's left side: the rose window, the title, the disc. */
+/* The start screen's title: the rose window, the title, the disc. Side by side, left of the
+ * panel, the rose window over the title; stacked, above the panel, the rose window left of
+ * the title and the lines about the disc under both. */
 static void draw_start_title(SDL_Renderer *ren, const Frame *F, const Menu *m, float t, float a)
 {
-    float u = F->u, x = F->cx - 230 * u, y = F->cy;
-    th_emblem(ren, x, y - 96 * u, 58 * u, t, a);
-    th_text(ren, TH_FONT_CAPS, th_fit(ren, TH_FONT_CAPS, 24 * u, "CASTLEVANIA", 380 * u, 5 * u), x, y + 10 * u,
+    float u = F->u;
+    float ex, ey, er;            /* the rose window: its middle, its size */
+    float x, y, title_w, k;      /* the title: its middle, CASTLEVANIA's line, its width, its scale */
+    float ix, iy, info_w;        /* the lines about the disc: their middle, the first one, their width */
+    if (F->stacked) {
+        ex = F->cx - 222 * u, ey = F->top + 86 * u, er = 54 * u;
+        x = F->cx + 66 * u, y = F->top + 34 * u, title_w = 360 * u, k = 0.9f;
+        ix = F->cx, iy = F->top + 156 * u, info_w = 560 * u;
+    } else {
+        ex = F->cx - 230 * u, ey = F->cy - 96 * u, er = 58 * u;
+        x = ex, y = F->cy + 10 * u, title_w = 420 * u, k = 1.0f;
+        ix = x, iy = y + 136 * u, info_w = 420 * u;
+    }
+    th_emblem(ren, ex, ey, er, t, a);
+    th_text(ren, TH_FONT_CAPS, th_fit(ren, TH_FONT_CAPS, 24 * u, "CASTLEVANIA", title_w - 40 * u, 5 * u), x, y,
             th_fade(TH_GOLD, a), "CASTLEVANIA", 0.5f, 0.5f, 5 * u, th_fade(th_alpha((SDL_Color){0, 0, 0, 255}, 160), a));
-    float tp = th_fit(ren, TH_FONT_TITLE, 66 * u, "Rondo of Blood", 420 * u, 1 * u);
-    th_text(ren, TH_FONT_TITLE, tp, x, y + 58 * u, th_fade(TH_TEXT, a), "Rondo of Blood", 0.5f, 0.5f, 1 * u,
+    float tp = th_fit(ren, TH_FONT_TITLE, 66 * k * u, "Rondo of Blood", title_w, 1 * u);
+    th_text(ren, TH_FONT_TITLE, tp, x, y + 48 * k * u, th_fade(TH_TEXT, a), "Rondo of Blood", 0.5f, 0.5f, 1 * u,
             th_fade(th_alpha(TH_EMBER, 190), a));
-    th_divider(ren, x - 170 * u, x + 170 * u, y + 102 * u, u, a);
-    th_text(ren, TH_FONT_UI, 11 * u, x, y + 122 * u, th_fade(TH_TEXT_DIM, a), "RONDO RECOMP", 0.5f, 0.5f, 5 * u, TH_NONE);
+    th_divider(ren, x - 170 * k * u, x + 170 * k * u, y + 92 * k * u, u, a);
+    th_text(ren, TH_FONT_UI, 11 * u, x, y + 112 * k * u, th_fade(TH_TEXT_DIM, a), "RONDO RECOMP", 0.5f, 0.5f, 5 * u,
+            TH_NONE);
     if (m->info[0][0])
-        th_text(ren, TH_FONT_UI, th_fit(ren, TH_FONT_UI, 12.5f * u, m->info[0], 420 * u, 0), x, y + 146 * u,
+        th_text(ren, TH_FONT_UI, th_fit(ren, TH_FONT_UI, 12.5f * u, m->info[0], info_w, 0), ix, iy,
                 th_fade(TH_GOLD, a), m->info[0], 0.5f, 0.5f, 0, th_fade(th_alpha((SDL_Color){0, 0, 0, 255}, 150), a));
     if (m->info[1][0])
-        th_text(ren, TH_FONT_UI, 10 * u, x, y + 164 * u, th_fade(TH_TEXT_DIM, a), m->info[1], 0.5f, 0.5f, 0.5f * u,
+        th_text(ren, TH_FONT_UI, 10 * u, ix, iy + 18 * u, th_fade(TH_TEXT_DIM, a), m->info[1], 0.5f, 0.5f, 0.5f * u,
                 th_fade(th_alpha((SDL_Color){0, 0, 0, 255}, 150), a));
     if (m->notice[0]) {   /* a newer version is out */
         float glow = 0.8f + 0.2f * sinf(t * 2.5f);
-        th_text(ren, TH_FONT_UI, th_fit(ren, TH_FONT_UI, 13 * u, m->notice, 420 * u, 0), x, y + 190 * u,
-                th_fade((SDL_Color){255, 218, 140, (Uint8)(255 * glow)}, a), m->notice, 0.5f, 0.5f, 0,
-                th_fade(th_alpha(TH_EMBER, 170), a));
+        th_text(ren, TH_FONT_UI, th_fit(ren, TH_FONT_UI, 13 * u, m->notice, info_w, 0), ix,
+                iy + (F->stacked ? 34 : 44) * u, th_fade((SDL_Color){255, 218, 140, (Uint8)(255 * glow)}, a), m->notice,
+                0.5f, 0.5f, 0, th_fade(th_alpha(TH_EMBER, 170), a));
     }
 }
 

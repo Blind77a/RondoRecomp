@@ -36,6 +36,8 @@
 #include "showcase.h"
 #include "theme.h"
 #include "video.h"
+#include "wide.h"
+#include "fit.h"
 #include "moves.h"
 #include "prompt.h"
 #include "programs.h"
@@ -58,7 +60,7 @@ static void show_osd(const char *fmt, ...)
     osd_until = SDL_GetTicks() + 2500;
 }
 
-/* A one-line notice on a plaque with pointed ends (theme.h): top centre (clear of the HUD
+/* A one-line notice on a plaque with pointed ends (theme.h): top center (clear of the HUD
  * on the left), or bottom right. */
 static void draw_banner(SDL_Renderer *ren, const char *text, bool bottom_right)
 {
@@ -156,6 +158,7 @@ static bool no_save_files;   /* test runs: fresh backup RAM, nothing written to 
 static TitlePrompt prompt;   /* the title's PUSH RUN BUTTON! as this PC's button (pad set per frame) */
 static Moves moves;          /* the Gameplay page's 8-way whip and limp whip (moves.h) */
 static MoveOptions move_opts;   /* this frame's: off in hardcore mode and the tests */
+static Wide wide;            /* widescreen: the picture decided around every frame (wide.h) */
 
 /* A frame of the game. While rewinding (`live` false) the moves only draw: the frame shown is
  * one already played. */
@@ -163,18 +166,24 @@ static void run_frame_as(bool live)
 {
     prompt_before_frame(&prompt, &pce);
     moves_before_frame(&moves, &pce, &move_opts, live);
+    wide_before_frame(&wide, &pce);
     pce_run_frame(&pce);
+    wide_after_frame(&wide, &pce);
     prompt_after_frame(&prompt, &pce);
     moves_after_frame(&moves, &pce, &move_opts, live);
 }
 
 static void run_frame(void) { run_frame_as(true); }
 
+/* columns the last frame's picture has on each side of the game's 256 */
+static int frame_wide(void) { return pce.vdc.fb_w == 256 + 2 * wide.active ? wide.active : 0; }
+
 /* the frontend's own bookkeeping, after a state load, a rewind or a restart */
 static void watch_reset(void)
 {
     game_watch_reset(&gw, &pce);
     moves_reset(&moves);
+    wide_reset(&wide);
 }
 
 typedef struct Session {
@@ -350,6 +359,8 @@ static void update_leftovers(void)
     SDL_RemovePath(dir);
 }
 
+static Uint64 update_started;   /* when Download and install was chosen */
+
 /* The Updates page's lines, the start screen's notice, and an update being installed
  * (Setup): its progress. True once it is installed: the game restarts. */
 static bool update_tick(Menu *m)
@@ -363,12 +374,14 @@ static bool update_tick(Menu *m)
         char line[160];
         int pct;
         UpdateRun r = update_run_poll(line, sizeof line, &pct);
-        m->upd_pct = pct;
+        m->upd_pct = pct < 0 ? 0 : pct;                /* the bar, from the start */
         snprintf(m->upd[0], sizeof m->upd[0], "Updating to Rondo Recomp %s", info ? info->version : "");
         if (pct >= 0) snprintf(m->upd[1], sizeof m->upd[1], "%.120s  %d%%", line, pct);
         else snprintf(m->upd[1], sizeof m->upd[1], "%s", line);
         snprintf(m->upd[3], sizeof m->upd[3], "Setup downloads it, puts it in place and rebuilds the game.");
-        snprintf(m->upd[4], sizeof m->upd[4], "The game restarts when it is done (about a minute).");
+        Uint64 secs = (SDL_GetTicks() - update_started) / 1000;
+        snprintf(m->upd[4], sizeof m->upd[4], "The game restarts when it is done (a few minutes on a Steam Deck): %d:%02d so far.",
+                 (int)(secs / 60), (int)(secs % 60));
         if (r == RUN_INSTALLED) {
             snprintf(m->upd[1], sizeof m->upd[1], "Installed: restarting...");
             return true;
@@ -422,8 +435,9 @@ static void update_install(Menu *m)
         return;
     }
     m->updating = true;
-    m->upd_pct = -1;
+    m->upd_pct = 0;
     m->status[0] = 0;
+    update_started = SDL_GetTicks();
 }
 
 /* After an update: the new game in place of this one (args: its arguments, NULL-terminated). */
@@ -486,6 +500,25 @@ static void screenshot(SDL_Renderer *ren, const char *path)
         SDL_SaveBMP(s, path);
         SDL_DestroySurface(s);
     }
+}
+
+/* features test: the menu page's items the mouse finds going down the panel's middle, and
+ * whether they come in order */
+static int items_under_mouse(const Menu *m, SDL_Renderer *ren, bool *in_order)
+{
+    int ww, wh, found = 0, last = -1;
+    SDL_GetRenderOutputSize(ren, &ww, &wh);
+    float col_x = 0, col_y = 0;
+    *in_order = true;
+    menu_item_center(m, ren, 0, &col_x, &col_y);
+    for (int y = 0; y < wh; y++) {
+        int it = menu_item_at(m, ren, col_x, (float)y);
+        if (it < 0 || it == last) continue;
+        if (it != last + 1) *in_order = false;
+        last = it;
+        found++;
+    }
+    return found;
 }
 
 /* features test: a Controls page count fed presses. Each step is a controller button (b >= 0)
@@ -597,7 +630,13 @@ int main(int argc, char **argv)
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (set.fullscreen && !test_mode && !showcase) flags |= SDL_WINDOW_FULLSCREEN;
     if (test_mode || showcase) flags |= SDL_WINDOW_NOT_FOCUSABLE;   /* never takes the keyboard from the player */
+    bool fit = !test_mode && !showcase;   /* (the tests' windows are the size they are) */
+    if (fit) flags |= SDL_WINDOW_HIDDEN;
     SDL_Window *win = SDL_CreateWindow(title, features_dir ? 1280 : 960, 720, flags);
+    if (win && fit) {   /* 960 x 720 (4:3), smaller on a screen it would not fit (fit.h) */
+        rondo_fit_window(win, 960, 720, 1.0f, 0.0f);
+        SDL_ShowWindow(win);
+    }
     if (win && showcase) {   /* 1920 x 1080 pixels, whatever the desktop's scale */
         int w, h, pw, ph;
         SDL_GetWindowSize(win, &w, &h);
@@ -698,6 +737,7 @@ int main(int argc, char **argv)
     bool t_upd_shot = false;
     char t_upd_shot_path[1200] = "";   /* taken once the frame is drawn */
     const double frame_ns = 1e9 / FRAME_RATE;
+    Uint64 pace_last = 0, pace_frames = 0, pace_late = 0, pace_worst = 0;   /* frame pacing, for rondo.log */
     double audio_frac = 0.0;
     static int16_t samples[2048 * 2];
     Uint64 next = SDL_GetTicksNS();
@@ -823,7 +863,27 @@ int main(int argc, char **argv)
                 pending = "Download and install";
                 t_upd_phase = 2;
                 t_upd_loops = 0;
-            } else if (t_upd_phase == 2 && menu.updating && !t_upd_shot && menu.upd_pct >= 30 && menu.upd_pct <= 90) {
+            }
+            /* the bar as it goes: each new step, and every tenth of the way (in order: the
+             * test reads that the bar only goes forward) */
+            static char t_upd_step[160];
+            static int t_upd_tenth = -1, t_upd_last = -1;
+            if (t_upd_phase == 2 && menu.updating) {
+                char step[160];
+                snprintf(step, sizeof step, "%s", menu.upd[1]);
+                char *pc = strrchr(step, ' ');
+                if (pc && strchr(pc, '%')) *pc = 0;   /* the step's name without its percentage */
+                size_t sl = strlen(step);
+                while (sl && step[sl - 1] == ' ') step[--sl] = 0;
+                if (strcmp(step, t_upd_step) || menu.upd_pct / 10 != t_upd_tenth) {
+                    TLOG("autotest-update: bar %3d%%  %s  (%s)%s\n", menu.upd_pct, step, menu.upd[4],
+                         menu.upd_pct < t_upd_last ? "  WENT BACK" : "");
+                    snprintf(t_upd_step, sizeof t_upd_step, "%s", step);
+                    t_upd_tenth = menu.upd_pct / 10;
+                }
+                t_upd_last = menu.upd_pct;
+            }
+            if (t_upd_phase == 2 && menu.updating && !t_upd_shot && menu.upd_pct >= 30 && menu.upd_pct <= 90) {
                 snprintf(t_upd_shot_path, sizeof t_upd_shot_path, "%s/update_progress.bmp", update_dir);
                 TLOG("autotest-update: installing: \"%s\" (%d%%)\n", menu.upd[1], menu.upd_pct);
                 t_upd_shot = true;
@@ -1102,6 +1162,13 @@ int main(int argc, char **argv)
         bool hardcore = ach_hardcore();
         if (hardcore) memset(&cheats, 0, sizeof cheats);   /* RetroAchievements' hardcore mode: none */
         move_opts = (MoveOptions){set.eight_way && !hardcore && !test_mode, set.limp_whip && !hardcore && !test_mode};
+        {   /* widescreen fills the window's shape (not in hardcore mode: it changes how far out
+             * the game's objects start and stay) */
+            int ww, wh;
+            SDL_GetRenderOutputSize(ren, &ww, &wh);
+            wide.want = set.widescreen && !hardcore && wh > 0
+                            ? wide_extent((double)ww / (double)wh, video_picture_aspect(&set)) : 0;
+        }
         bool rewinding = false, ran_frame = false;
         if (menu_on_start_screen(&menu)) {
             /* the start screen: the game waits for Play (nothing runs, nothing sounds) */
@@ -1216,7 +1283,7 @@ int main(int argc, char **argv)
                 pce.pad = pad;
                 run_frame();
                 game_apply_cheats(&pce, &cheats, &gw);
-                game_apply_run(&pce, !test_mode && !hardcore && input_run_held(&in), &gw);
+                game_apply_run(&pce, set.run && !test_mode && !hardcore && input_run_held(&in), &gw);
                 ach_frame();
                 ran_frame = true;
                 if (have_rewind && set.rewind) rewind_record(&rw, &pce, pce.pad);
@@ -1248,7 +1315,7 @@ int main(int argc, char **argv)
         }
 
         /* video */
-        video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
+        video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, frame_wide());
         if (features_dir && !t_shots && pce.frame >= 17880) {
             /* screenshots: 16:9 window with each picture mode and screen effect, then the menu
              * pages */
@@ -1324,18 +1391,8 @@ int main(int argc, char **argv)
                 snprintf(path, sizeof path, "%s/start_screen.bmp", features_dir);
                 screenshot(ren, path);
                 MenuResult on_start = menu_nav(&sm, &set, NAV_MENU), on_back = menu_nav(&sm, &set, NAV_BACK);
-                int ww, wh, found = 0, last = -1;
-                SDL_GetRenderOutputSize(ren, &ww, &wh);
-                bool in_order = true;
-                float col_x = 0, col_y = 0;
-                menu_item_center(&sm, ren, 0, &col_x, &col_y);        /* down the panel's middle */
-                for (int y = 0; y < wh; y++) {
-                    int it = menu_item_at(&sm, ren, col_x, (float)y);
-                    if (it < 0 || it == last) continue;
-                    if (it != last + 1) in_order = false;
-                    last = it;
-                    found++;
-                }
+                bool in_order;
+                int found = items_under_mouse(&sm, ren, &in_order);
                 menu_click(&sm, &set, 4);                        /* Video */
                 menu_nav(&sm, &set, NAV_BACK);
                 MenuResult after = menu_nav(&sm, &set, NAV_MENU);
@@ -1343,6 +1400,45 @@ int main(int argc, char **argv)
                      on_start == MENU_PLAY ? "plays" : "DOES NOT PLAY", on_back == MENU_NOTHING ? "stays" : "LEAVES",
                      found, in_order ? " in order" : " OUT OF ORDER",
                      after == MENU_PLAY ? "returns to it" : "DOES NOT RETURN");
+            }
+            {   /* a 4:3 window (a cabinet's screen): the start screen stacked, the menu's pages
+                 * grown to its height; the mouse still finds each item in order */
+                int keep_w, keep_h;
+                SDL_GetWindowSize(win, &keep_w, &keep_h);
+                SDL_SetWindowSize(win, 960, 720);
+                SDL_SyncWindow(win);
+                int ow, oh;
+                SDL_GetRenderOutputSize(ren, &ow, &oh);
+                Menu sm = {0};
+                menu_open_start_screen(&sm);
+                sm.opened_ms = 0;
+                start_screen_info(&sm, &ss, &set, disc_path);
+                snprintf(sm.notice, sizeof sm.notice, "Version 9.9 is available  -  see Updates");   /* where it goes */
+                video_draw(&video, &set);
+                menu_draw(&sm, &set, ren);
+                snprintf(path, sizeof path, "%s/start_screen_4x3.bmp", features_dir);
+                screenshot(ren, path);
+                bool start_order, main_order;
+                int start_found = items_under_mouse(&sm, ren, &start_order);
+                Menu m43 = {0};
+                menu_open(&m43);
+                m43.opened_ms = 0;
+                video_draw(&video, &set);
+                menu_draw(&m43, &set, ren);
+                snprintf(path, sizeof path, "%s/menu_main_4x3.bmp", features_dir);
+                screenshot(ren, path);
+                int main_found = items_under_mouse(&m43, ren, &main_order);
+                for (int d = 0; d < 7; d++) menu_nav(&m43, &set, NAV_DOWN);   /* Controls: the most rows */
+                menu_nav(&m43, &set, NAV_OK);
+                video_draw(&video, &set);
+                menu_draw(&m43, &set, ren);
+                snprintf(path, sizeof path, "%s/menu_controls_4x3.bmp", features_dir);
+                screenshot(ren, path);
+                TLOG("features: 4:3 window (%dx%d): start screen %d items under the mouse%s, menu %d%s\n", ow, oh,
+                     start_found, start_order ? " in order" : " OUT OF ORDER", main_found,
+                     main_order ? " in order" : " OUT OF ORDER");
+                SDL_SetWindowSize(win, keep_w, keep_h);
+                SDL_SyncWindow(win);
             }
             char merr[200];
             int bbad = bind_check(merr, sizeof merr);
@@ -1492,7 +1588,7 @@ int main(int argc, char **argv)
                     pce.pad = moves_pad(&moves, &pce, &on, pad, attack);
                     if (attack) up_seen |= pce.pad & PAD_UP;
                     run_frame();
-                    video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
+                    video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, frame_wide());
                     char path[1200];
                     if (moves.draw && moves.dir == 2) {
                         up_frames++;
@@ -1538,6 +1634,13 @@ int main(int argc, char **argv)
         if (features_dir || showcase_fast) continue;   /* run uncapped */
         next += (Uint64)frame_ns;
         Uint64 now = SDL_GetTicksNS();
+        /* frame pacing for rondo.log: a frame that came more than half a frame late */
+        if (pace_last && now - pace_last > (Uint64)(frame_ns * 1.5)) {
+            pace_late++;
+            if (now - pace_last > pace_worst) pace_worst = now - pace_last;
+        }
+        pace_frames++;
+        pace_last = now;
         if (next > now) SDL_DelayNS(next - now);
         else if (now - next > (Uint64)(frame_ns * 5)) next = now;   /* fell behind: resync */
     }
@@ -1566,6 +1669,9 @@ int main(int argc, char **argv)
                         recomp_build_id, (unsigned long long)pce.frame, recomp_chunk_count, recomp_entry_count,
                         tot ? 100.0 * (double)rs->native_cycles / (double)tot : 0.0,
                         (unsigned long long)rs->calls, rs->miss_entries);
+                fprintf(lf, "frames late (over 1.5 frame times apart): %llu of %llu (%.1f%%), worst %.1f ms\n",
+                        (unsigned long long)pace_late, (unsigned long long)pace_frames,
+                        pace_frames ? 100.0 * (double)pace_late / (double)pace_frames : 0.0, (double)pace_worst / 1e6);
                 fclose(lf);
             }
         }

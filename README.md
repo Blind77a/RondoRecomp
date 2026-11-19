@@ -42,6 +42,7 @@ ISO/WAV/BIN tracks); everything derived from it goes to `work/`, which is git-ig
 - Super Castlevania IV moves (Gameplay page): 8-way whipping and dove throwing, and a limp whip, after Pizzano's Super Rondo of Blood hack (RondoRecomp's own version)
 - RetroAchievements
 - Portable mode: tick Portable in Setup (or make a `user` folder next to `rondo.exe` or the AppImage) and options, saves and states are kept there
+- 4:3 screens (arcade cabinets): Setup's window always fits the screen and has a 4:3 layout (picked on a 4:3 screen, or with its "4:3 screen" checkbox or `--4:3`); the game's start screen and menus are laid out for 4:3 too
 
 ## Analysis tools
 
@@ -67,6 +68,12 @@ Findings so far: [docs/findings.md](docs/findings.md).
   and the System Card functions the game uses, reimplemented in C (no BIOS needed).
 - A gothic start screen (a candlelit town at night under a pale moon) and menus in arched
   gold-and-umber frames with blackletter titles, with controller, keyboard and mouse.
+- Widescreen (on by default): rooms that scroll sideways fill a 16:9 screen, with a camera
+  that stops at the room's walls like a modern game's (a stage starts with Richter at the left
+  of a wider view; a room ends with its door at the edge), enemies in view from further out
+  and parallax layers that keep their own pace. The game's own camera, walls, doors and boss
+  arenas are left exactly as they were: only the picture is wider (boss arenas and the
+  Prologue's carriage chase included). One-screen rooms such as towers and shafts stay 4:3.
 - An in-game menu (F1 / Back): video modes for 4K, 16:9 and ultrawide screens (4:3 with
   blurred sides, square pixels, stretch, integer scaling, sharp filtering), cinematic
   skipping, cheats (infinite health, hearts, lives), modern controller layout with
@@ -74,7 +81,7 @@ Findings so far: [docs/findings.md](docs/findings.md).
   as WASD, alongside the arrows), and a Japanese option (with your Japanese disc).
 - The original Japanese disc and the English translation, installed side by side (the
   Japanese story text uses a bundled public-domain kanji font in place of the System Card's).
-- Richter's run from Symphony of the Night (hold LB), and Maria cheats (unlocked; play as her
+- Richter's run from Symphony of the Night (hold LB; on by default, Gameplay page turns it off), and Maria cheats (unlocked; play as her
   from the Prologue on). See [docs/runtime.md](docs/runtime.md).
 - [RetroAchievements](https://retroachievements.org/game/4855): achievements, leaderboards and
   hardcore mode through RetroAchievements' own client library (rcheevos), for both discs.

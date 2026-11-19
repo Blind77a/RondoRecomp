@@ -24,6 +24,7 @@ typedef struct Settings {
     int effect;            /* EFFECT_*: scanlines, a CRT (flat or curved), composite */
     int effect_strength;   /* STRENGTH_* */
     int sides;             /* SIDES_*: what fills a wide screen beside the picture */
+    bool widescreen;       /* rooms that scroll sideways shown as wide as the screen (wide.h) */
     /* gameplay */
     int skip;              /* SKIP_*: story cinematics */
     bool rewind;
@@ -31,6 +32,7 @@ typedef struct Settings {
     bool start_screen;     /* show the start screen before the game (rondo.exe --play skips it once) */
     bool eight_way;        /* Richter's whip and Maria's doves in 8 directions (moves.h) */
     bool limp_whip;        /* Richter's whip hangs while Attack is held (moves.h) */
+    bool run;              /* the Run control (hold LB) runs, as in Symphony of the Night (game.h) */
     int slot;              /* save-state slot 1-9 */
     /* cheats */
     bool cheat_health, cheat_hearts, cheat_lives;

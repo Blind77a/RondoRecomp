@@ -118,8 +118,9 @@ The Updates page shows what is new; "Download and install" does the rest:
    GitHub publishes for it.
 2. On Windows, its files take the place of the old ones next to the game. Your disc
    images, saves, save states and options are not touched.
-3. Setup rebuilds the game from the new version (about a minute; longer on a Steam Deck),
-   and the game restarts as the new version. On Linux, the new AppImage then takes the
+3. Setup rebuilds the game from the new version (about a minute; a few on a Steam Deck),
+   and the game restarts as the new version. The Updates page shows how far it has got:
+   a bar for the whole update, the step it is on and the time so far. On Linux, the new AppImage then takes the
    old one's place, under the same name, so Steam keeps finding it.
 If anything goes wrong, the old version is put back and the page says what happened.
 "Check at launch" (on by default) turns the question to GitHub off; "Check now" asks
@@ -182,7 +183,8 @@ BUTTON! / KEY! if you gave Pause another control.
 
 Run is Richter's run from Symphony of the Night: hold LB while walking to go about 1.8
 times as fast (his run there is 2.3 pixels a frame against a 1.25 walk; Rondo's walk is the
-same 1.25). Jumps started while running keep the speed. Maria runs too.
+same 1.25). Jumps started while running keep the speed. Maria runs too. It is on by
+default; Menu, Gameplay, Run turns it off for the game as it was made.
 
 Start screen
 ------------
@@ -203,6 +205,15 @@ states, choose the slot, reset, back to the start screen, quit, and:
 Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            VSync: on (the default), each frame is shown when the screen refreshes, so the
            picture never tears; off shows it at once
+           Widescreen: on (the default), rooms that scroll sideways fill a wide screen
+           (16:9 shows 42 more of the game's pixels on each side). The view stops at a
+           room's walls like a modern game's camera: a stage starts with Richter at the
+           left of a wider view, enemies come into it from further away, and at the end
+           of a room its wall or door is at the edge of the screen; through a door the
+           view glides into the next room. A boss arena in a wider room stays wide, and
+           the Prologue's carriage chase widens out as its title shows. Rooms one screen
+           wide (towers, shafts) stay 4:3. Off in RetroAchievements' hardcore mode (it
+           changes how far out enemies appear)
            Aspect ratio: 4:3 (as on a TV), square pixels, or stretched to fill the screen
            Size: Fit screen (as big as the screen allows), or Whole multiples (every game
            pixel the same size; leaves a border)
@@ -223,9 +234,11 @@ Gameplay   Skip cinematics: Press START, Automatically, or Never. During the log
            the air down and down and ahead; Maria throws her doves the same way. Up and
            Attack then no longer throws the sub-weapon: use the Sub-weapon control
            Limp whip (off by default): keep Attack held after Richter's whip and it hangs
-           from his hand; the d-pad swings it round (it still hurts what it touches) and
+           from his hand; the d-pad swings it around (it still hurts what it touches) and
            letting go of Attack ends it. Ideas from Pizzano's Super Rondo of Blood hack,
            made anew for RondoRecomp (none of the hack is used)
+           Run (on by default): holding the Run control (LB / S) runs, as in Symphony of
+           the Night (see Controls above); off, it does nothing
 RetroAchievements
            On / off, hardcore mode, your account (see RetroAchievements above)
 Cheats     Infinite health, infinite hearts (always 99), infinite lives. At a stage's end
@@ -272,6 +285,20 @@ Updates leave the user folder alone. On Linux the user folder is next to the App
 holds your options, saves and states, while the game Setup builds stays in
 ~/.local/share/RondoRecomp/install. RONDORECOMP_PROFILE, if set, still comes first.
 
+4:3 screens (arcade cabinets)
+-----------------------------
+Setup's window always fits on the screen, with room for its buttons. On a 4:3 or 5:4
+screen it lays itself out for 4:3 (640 x 480 at its own size); on a screen too small for
+that in a window (640 x 480 itself) it opens full screen. The "4:3 screen" checkbox at the
+bottom right of its window switches between the 4:3 layout and the wide one, and Setup
+remembers the choice (in setup.ini next to it; on Linux in
+~/.local/share/RondoRecomp/install). "RondoRecomp Setup.exe" --4:3 or --wide
+chooses for that one run (on Linux: the AppImage with --setup --4:3 or --setup --wide).
+The game opens in a 4:3 window (960 x 720, smaller if the screen is) and F11 or Menu,
+Video, Fullscreen fills the whole screen. On a 4:3 screen the picture fills it as on a TV:
+Widescreen only shows more of a room on a screen wider than 4:3. The start screen puts the
+title above the menu, and the menu's pages grow to the screen's height.
+
 Japanese and English
 --------------------
 The game's text and subtitles come from the disc image: Japanese is the original disc
@@ -299,6 +326,8 @@ rondo_setup.exe --update                  install the latest version from GitHub
 rondo_setup.exe --portable on|off         portable mode on or off, as Setup's checkbox
                                           (on copies your options and saves in; off copies
                                           them back and keeps the folder as user.old)
+"RondoRecomp Setup.exe" --4:3 | --wide    Setup's window laid out for a 4:3 screen, or the
+                                          wide way, this time (see 4:3 screens above)
 (on Linux: the AppImage with --setup-cli, then the same options)
 
 Status

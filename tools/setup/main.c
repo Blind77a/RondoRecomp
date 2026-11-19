@@ -34,6 +34,7 @@
 #include "../frontend/programs.h"
 #include "../recomp/gen.h"
 #include "chd.h"
+#include "../frontend/child.h"
 #include "portable.h"
 #include "setup.h"
 #include "vc.h"
@@ -272,6 +273,8 @@ static bool import_cue(const char *cue_path, const char *stage, char *cue_out, s
 static void gen_log(const char *line) { say("  %s\n", line); }
 
 /* Recompile the game's code from the extracted disc into gen_dir. */
+static void gen_progress(int pct) { setup_progress_hook("Recompiling", pct); }
+
 static bool generate(const char *game_cue, const char *gen_dir, const char *misses, uint64_t fingerprint)
 {
     remove_tree(gen_dir);
@@ -282,6 +285,7 @@ static bool generate(const char *game_cue, const char *gen_dir, const char *miss
     go.cue = game_cue;
     go.out_dir = gen_dir;
     go.build_id = build_id;
+    go.progress = gen_progress;
     if (misses && SDL_GetPathInfo(misses, NULL)) {
         go.seed_files[0] = misses;
         say("  using entry points recorded while playing (%s)\n", misses);
@@ -349,6 +353,96 @@ static bool icon_resource(const char *out, char *rc_path, size_t n)
 }
 #endif
 
+/* A compiler run of the build (compile_all): one source file. */
+typedef struct Job {
+    Child *c;
+    int src;
+    char out[4096];             /* what it said */
+    size_t out_len;
+} Job;
+
+/* Every source compiled to an object of its own, as many at once as the PC has threads
+ * (the generated code is split into files of a quarter of a megabyte so that they spread): the
+ * build's progress ("Building", to 90%) is the share of the sources' bytes compiled so far.
+ * False with g_err set if one fails; what the compiler said is passed on. */
+static bool compile_all(const char *const *cflags, int n_cflags, const char *const *srcs, char (*objs)[1100], int n_srcs)
+{
+    long long total = 0, done = 0, sizes[512];
+    for (int i = 0; i < n_srcs; i++) {
+        SDL_PathInfo info;
+        sizes[i] = SDL_GetPathInfo(srcs[i], &info) ? (long long)info.size : 0;
+        total += sizes[i] + 4096;   /* (and a little for starting the compiler) */
+    }
+    int jobs = SDL_GetNumLogicalCPUCores();
+    if (jobs < 1) jobs = 1;
+    if (jobs > 16) jobs = 16;
+    static Job running[16];
+    int active = 0, next = 0, last_pct = -1;
+    bool ok = true;
+    setup_progress_hook("Building", 0);
+    while ((ok && next < n_srcs) || active) {
+        while (ok && active < jobs && next < n_srcs) {
+            const char *args[96];
+            int n = 0;
+            for (int k = 0; k < n_cflags; k++) args[n++] = cflags[k];
+            args[n++] = "-c";
+            args[n++] = srcs[next];
+            args[n++] = "-o";
+            args[n++] = objs[next];
+            args[n] = NULL;
+            char err[256];
+            Job *j = &running[active];
+            memset(j, 0, sizeof *j);
+            j->src = next++;
+            j->c = child_start(args, err, sizeof err);
+            if (!j->c) {
+                snprintf(g_err, sizeof g_err, "%s", err);
+                ok = false;
+                break;
+            }
+            active++;
+        }
+        bool finished = false;
+        for (int a = 0; a < active; a++) {
+            Job *j = &running[a];
+            char buf[2048];
+            int got;
+            while ((got = child_read(j->c, buf, sizeof buf)) > 0) {
+                size_t room = sizeof j->out - 1 - j->out_len;
+                size_t take = (size_t)got < room ? (size_t)got : room;
+                memcpy(j->out + j->out_len, buf, take);
+                j->out_len += take;
+            }
+            int code;
+            if (!child_wait(j->c, false, &code)) continue;
+            while ((got = child_read(j->c, buf, sizeof buf)) > 0) {
+                size_t room = sizeof j->out - 1 - j->out_len;
+                size_t take = (size_t)got < room ? (size_t)got : room;
+                memcpy(j->out + j->out_len, buf, take);
+                j->out_len += take;
+            }
+            child_free(j->c);
+            j->out[j->out_len] = 0;
+            if (code != 0) {
+                if (j->out_len) say("%s%s", j->out, j->out[j->out_len - 1] == '\n' ? "" : "\n");
+                if (ok) {
+                    const char *name = strrchr(srcs[j->src], '/'), *b = strrchr(srcs[j->src], '\\');
+                    if (b > name) name = b;
+                    snprintf(g_err, sizeof g_err, "compiling %s failed (exit code %d)", name ? name + 1 : srcs[j->src], code);
+                }
+                ok = false;
+            }
+            done += sizes[j->src] + 4096;
+            running[a--] = running[--active];
+            finished = true;
+        }
+        int pct = (int)(done * 90 / (total ? total : 1));
+        if (pct != last_pct) setup_progress_hook("Building", last_pct = pct);
+        if (!finished) SDL_Delay(10);
+    }
+    return ok;
+}
+
 static bool build(const char *sdk, const char *zig, const char *out, const char *gen_dir)
 {
     /* the list of runtime sources ships with the SDK */
@@ -359,9 +453,10 @@ static bool build(const char *sdk, const char *zig, const char *out, const char 
     if (!list) { snprintf(g_err, sizeof g_err, "SDK not found (%s)", list_path); return false; }
 
     static char storage[600][1024];
-    const char *args[700];
-    int n = 0, s = 0;
-    static char inc_rt[1100], inc_sdl[1100], libdir[1100], exe[1100];
+    static char objs[512][1100];
+    const char *cflags[96], *srcs[512], *link[600];
+    int nf = 0, ns = 0, nl = 0, s = 0;
+    static char inc_rt[1100], inc_sdl[1100], libdir[1100], exe[1100], objdir[1100];
     join(inc_rt, sizeof inc_rt, sdk, "src/runtime");
     join(inc_sdl, sizeof inc_sdl, sdk, "include");
     join(libdir, sizeof libdir, sdk, "lib");
@@ -374,20 +469,19 @@ static bool build(const char *sdk, const char *zig, const char *out, const char 
     snprintf(opt_i3, sizeof opt_i3, "-I%s", gen_dir);
     join(opt_l, sizeof opt_l, libdir, SDL_LINK);   /* passed by path */
 
-    args[n++] = zig;
-    args[n++] = "cc";
-    args[n++] = "-target";
-    args[n++] = ZIG_TARGET;
-    args[n++] = "-O2";
-    args[n++] = "-std=c11";
+    cflags[nf++] = zig;
+    cflags[nf++] = "cc";
+    cflags[nf++] = "-target";
+    cflags[nf++] = ZIG_TARGET;
+    cflags[nf++] = "-O2";
+    cflags[nf++] = "-std=c11";
 #ifndef _WIN32
-    args[n++] = "-D_DEFAULT_SOURCE";          /* glibc: strdup, strcasecmp (rcheevos) under -std=c11 */
+    cflags[nf++] = "-D_DEFAULT_SOURCE";          /* glibc: strdup, strcasecmp (rcheevos) under -std=c11 */
 #endif
-    args[n++] = "-w";
-    args[n++] = "-s";                          /* no debug info / .pdb */
-    args[n++] = opt_i1;
-    args[n++] = opt_i2;
-    args[n++] = opt_i3;
+    cflags[nf++] = "-w";
+    cflags[nf++] = opt_i1;
+    cflags[nf++] = opt_i2;
+    cflags[nf++] = opt_i3;
     /* the SDK's sources, and options for them: -I<path relative to the SDK>, -D<define> */
     int sdk_files = 0;
     for (char *line = strtok(list, "\r\n"); line && s < 200; line = strtok(NULL, "\r\n")) {
@@ -395,44 +489,25 @@ static bool build(const char *sdk, const char *zig, const char *out, const char 
         if (!strncmp(line, "-I", 2)) {
             snprintf(storage[s], sizeof storage[s], "-I");
             join(storage[s] + 2, sizeof storage[s] - 2, sdk, line + 2);
+            if (nf < 90) cflags[nf++] = storage[s++];
         } else if (!strncmp(line, "-D", 2)) {
             snprintf(storage[s], sizeof storage[s], "%s", line);
+            if (nf < 90) cflags[nf++] = storage[s++];
         } else {
             join(storage[s], sizeof storage[s], sdk, line);
+            srcs[ns++] = storage[s++];
             sdk_files++;
         }
-        args[n++] = storage[s++];
     }
     int gen_count = 0;
     int count = 0;
     char **gen_files = SDL_GlobDirectory(gen_dir, "*.c", 0, &count);
-    for (int i = 0; gen_files && i < count && s < 600; i++) {
+    for (int i = 0; gen_files && i < count && s < 600 && ns < 512; i++) {
         join(storage[s], sizeof storage[s], gen_dir, gen_files[i]);
-        args[n++] = storage[s++];
+        srcs[ns++] = storage[s++];
         gen_count++;
     }
     SDL_free(gen_files);
-#ifdef _WIN32
-    /* the icon: compiled to a .res first (zig cc cannot build an .rc together with -s) */
-    static char rc[1100], res[1100];
-    if (icon_resource(out, rc, sizeof rc)) {
-        snprintf(res, sizeof res, "%s", rc);
-        snprintf(res + strlen(res) - 3, 5, ".res");
-        const char *rc_args[] = {zig, "rc", "-fo", res, rc, NULL};
-        if (run(rc_args)) args[n++] = res;
-        else say("  the icon could not be built (%s); rondo.exe keeps the default icon\n", g_err);
-    }
-    args[n++] = opt_l;
-    args[n++] = "-lwinhttp";                 /* RetroAchievements' server (tools/frontend/http.c) */
-    args[n++] = "-Wl,--subsystem,windows";   /* GUI program: zig cc ignores -mwindows */
-#else
-    args[n++] = opt_l;
-    args[n++] = "-lm";
-    args[n++] = "-Wl,-rpath,$ORIGIN";        /* libSDL3.so.0 is found next to rondo */
-#endif
-    args[n++] = "-o";
-    args[n++] = exe;
-    args[n] = NULL;
     SDL_free(list);
 
     /* keep the compiler's cache next to the build instead of in the user profile */
@@ -442,9 +517,51 @@ static bool build(const char *sdk, const char *zig, const char *out, const char 
     SDL_Environment *env = SDL_GetEnvironment();
     SDL_SetEnvironmentVariable(env, "ZIG_GLOBAL_CACHE_DIR", cache, true);
     SDL_SetEnvironmentVariable(env, "ZIG_LOCAL_CACHE_DIR", cache, true);
-    say("    compiling %d source files (runtime + recompiled game code; the first build also prepares\n"
-           "    the C library, which takes longer)\n", sdk_files + gen_count);
-    if (!run(args)) return false;
+
+    /* the objects: build/obj/000.o ... (the sources' names are not all different) */
+    join(objdir, sizeof objdir, out, "build/obj");
+    remove_tree(objdir);
+    SDL_CreateDirectory(objdir);
+    for (int i = 0; i < ns; i++) {
+        char name[16];
+        snprintf(name, sizeof name, "%03d.o", i);
+        join(objs[i], sizeof objs[i], objdir, name);
+    }
+    say("    compiling %d source files (runtime + recompiled game code), %d at a time\n", sdk_files + gen_count,
+        SDL_GetNumLogicalCPUCores() < 1 ? 1 : SDL_GetNumLogicalCPUCores() > 16 ? 16 : SDL_GetNumLogicalCPUCores());
+    if (!compile_all(cflags, nf, srcs, objs, ns)) return false;
+
+    link[nl++] = zig;
+    link[nl++] = "cc";
+    link[nl++] = "-target";
+    link[nl++] = ZIG_TARGET;
+    link[nl++] = "-O2";                         /* (the C library and compiler-rt as compiled before) */
+    link[nl++] = "-s";                          /* no debug info / .pdb */
+    for (int i = 0; i < ns; i++) link[nl++] = objs[i];
+#ifdef _WIN32
+    /* the icon: compiled to a .res first (zig cc cannot build an .rc together with -s) */
+    static char rc[1100], res[1100];
+    if (icon_resource(out, rc, sizeof rc)) {
+        snprintf(res, sizeof res, "%s", rc);
+        snprintf(res + strlen(res) - 3, 5, ".res");
+        const char *rc_args[] = {zig, "rc", "-fo", res, rc, NULL};
+        if (run(rc_args)) link[nl++] = res;
+        else say("  the icon could not be built (%s); rondo.exe keeps the default icon\n", g_err);
+    }
+    link[nl++] = opt_l;
+    link[nl++] = "-lwinhttp";                 /* RetroAchievements' server (tools/frontend/http.c) */
+    link[nl++] = "-Wl,--subsystem,windows";   /* GUI program: zig cc ignores -mwindows */
+#else
+    link[nl++] = opt_l;
+    link[nl++] = "-lm";
+    link[nl++] = "-Wl,-rpath,$ORIGIN";        /* libSDL3.so.0 is found next to rondo */
+#endif
+    link[nl++] = "-o";
+    link[nl++] = exe;
+    link[nl] = NULL;
+    say("    linking " GAME_PROGRAM " (the first build also prepares the C library, which takes longer)\n");
+    if (!run(link)) return false;
+    setup_progress_hook("Building", 100);
     char final_exe[1100];
     join(final_exe, sizeof final_exe, out, GAME_PROGRAM);
     if (!setup_replace(out, exe, final_exe)) return false;

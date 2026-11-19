@@ -2,7 +2,12 @@
  * rondo.exe (rondo on Linux), then play. Runs the same steps as rondo_setup
  * (tools/setup/main.c) in a worker thread; text is drawn with SDL3's built-in debug font, so
  * no font files are needed. It also asks GitHub for a newer version (../frontend/update.h)
- * and offers to install it (rondo_setup --update). */
+ * and offers to install it (rondo_setup --update).
+ *
+ * Its window fits the screen (../frontend/fit.h), full screen on one smaller than 640 x 480
+ * plus a window's frame. The layout is 640 x 400, or 640 x 480 for a 4:3 screen (an arcade
+ * cabinet's): the "4:3 screen" checkbox (kept in setup.ini next to Setup), --4:3 / --wide for
+ * one run, else the screen's own shape, chooses. */
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <stdio.h>
@@ -11,6 +16,7 @@
 #include <unistd.h>   /* execv */
 #endif
 
+#include "../frontend/fit.h"
 #include "../frontend/http.h"
 #include "../frontend/programs.h"
 #include "../frontend/update.h"
@@ -157,7 +163,7 @@ static bool exists(const char *name)
 }
 
 typedef struct Button { float x, y, w, h; const char *label; int id; } Button;
-enum { B_CHOOSE = 1, B_FOLDER, B_PLAY, B_REBUILD, B_QUIT, B_UPDATE, B_PORTABLE };
+enum { B_CHOOSE = 1, B_FOLDER, B_PLAY, B_REBUILD, B_QUIT, B_UPDATE, B_PORTABLE, B_SCREEN };
 
 static bool hit(const Button *b, float mx, float my)
 {
@@ -173,6 +179,62 @@ static void draw_button(SDL_Renderer *r, const Button *b, bool hover)
     SDL_RenderRect(r, &rc);
     float tx = b->x + (b->w - 8.0f * (float)strlen(b->label)) / 2;
     SDL_RenderDebugText(r, tx, b->y + (b->h - 8) / 2, b->label);
+}
+
+/* a checkbox: its box, then its label (the button is the row they take) */
+static void draw_check(SDL_Renderer *r, const Button *b, const char *label, bool on, bool hover)
+{
+    SDL_FRect box = {b->x, b->y + 2, 12, 12};
+    SDL_SetRenderDrawColor(r, 200, 170, 120, 255);
+    SDL_RenderRect(r, &box);
+    if (on) {
+        SDL_FRect tick = {b->x + 3, b->y + 5, 6, 6};
+        SDL_RenderFillRect(r, &tick);
+    }
+    SDL_SetRenderDrawColor(r, hover ? 255 : 200, hover ? 230 : 190, 170, 255);
+    SDL_RenderDebugText(r, b->x + 20, b->y + 4, label);
+}
+
+/* ---- the layout: 640 x 400, or 640 x 480 for a 4:3 screen ----------------------------- */
+
+static bool four_three;
+
+static int layout_h(void) { return four_three ? 480 : 400; }
+
+/* the instructions' lines (laid out for 640 x 400): further apart in the 4:3 layout */
+static float line_y(float y) { return four_three ? 60.0f + SDL_roundf((y - 60.0f) * 1.3f) : y; }
+
+/* The checkbox's choice, in setup.ini next to Setup: 1 the 4:3 layout, 0 the other, -1 never
+ * chosen (the screen's shape decides). */
+static int saved_screen(void)
+{
+    char path[1100];
+    snprintf(path, sizeof path, "%ssetup.ini", base_dir);
+    char *text = SDL_LoadFile(path, NULL);   /* (ends in a 0) */
+    int r = -1;
+    if (text) {
+        if (strstr(text, "screen = 4:3")) r = 1;
+        else if (strstr(text, "screen = wide")) r = 0;
+        SDL_free(text);
+    }
+    return r;
+}
+
+static void save_screen(void)
+{
+    char path[1100];
+    snprintf(path, sizeof path, "%ssetup.ini", base_dir);
+    const char *text = four_three ? "# RondoRecomp Setup\nscreen = 4:3\n" : "# RondoRecomp Setup\nscreen = wide\n";
+    if (!SDL_SaveFile(path, text, strlen(text))) SDL_Log("setup.ini: %s", SDL_GetError());
+}
+
+/* The window for the layout: twice its size at most, smaller to fit the screen; full screen
+ * on a screen too small for it at its own size (a cabinet's at 640 x 480). */
+static void lay_out(SDL_Window *win, SDL_Renderer *ren)
+{
+    SDL_SetRenderLogicalPresentation(ren, 640, layout_h(), SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    if (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN) return;
+    if (!rondo_fit_window(win, 640, layout_h(), 2.0f, 1.0f)) SDL_SetWindowFullscreen(win, true);
 }
 
 /* The game; from the AppImage, the AppImage again, which starts the game it built (and is
@@ -271,9 +333,12 @@ int main(int argc, char **argv)
     /* --autotest-play (the game's --autotest-setup): note this process next to the game, then
      * Play, which runs the game's --autotest */
     bool autotest_play = false;
+    int screen_arg = -1;   /* --4:3 (1) / --wide (0): the layout for this run */
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--rebuild")) auto_rebuild = true;
         if (!strcmp(argv[i], "--autotest-play")) { autotest_play = true; play_arg = "--autotest"; }
+        if (!strcmp(argv[i], "--4:3")) screen_arg = 1;
+        if (!strcmp(argv[i], "--wide")) screen_arg = 0;
     }
     if (!SDL_Init(SDL_INIT_VIDEO)) return 1;
     /* where the game is built: this folder, or the AppImage's own (programs.h) */
@@ -284,10 +349,16 @@ int main(int argc, char **argv)
     setup_progress_hook = gui_progress;
     update_check_start();   /* a newer version on GitHub? (answered in the loop: http_poll) */
 
-    SDL_Window *win = SDL_CreateWindow("RondoRecomp Setup", 1280, 800, SDL_WINDOW_RESIZABLE);
+    /* the layout: --4:3 / --wide, else the checkbox's last choice, else 4:3 on a 4:3 or 5:4
+     * screen */
+    int saved = saved_screen();
+    float screen = rondo_screen_aspect();
+    four_three = screen_arg >= 0 ? screen_arg == 1 : saved >= 0 ? saved == 1 : screen > 0 && screen < 1.4f;
+    SDL_Window *win = SDL_CreateWindow("RondoRecomp Setup", 1280, layout_h() * 2, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     SDL_Renderer *ren = win ? SDL_CreateRenderer(win, NULL) : NULL;
     if (!ren) return 1;
-    SDL_SetRenderLogicalPresentation(ren, 640, 400, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    lay_out(win, ren);
+    SDL_ShowWindow(win);
 
     bool running = true, portable = portable_on();
     float mx = 0, my = 0;
@@ -324,17 +395,24 @@ int main(int argc, char **argv)
         bool can_update = update_state(&news, NULL) == UPD_AVAILABLE && !updated && have_game;
         static char update_label[40];
         if (can_update) snprintf(update_label, sizeof update_label, "Update to %s", news->version);
-        Button buttons[7];
+        /* the bottom of the window (the buttons, the checkboxes, what happened) moves down in
+         * the 4:3 layout */
+        float off = (float)(layout_h() - 400);
+        const char *portable_label = rondo_appimage() ? "Portable: settings and saves next to the AppImage (user)"
+                                                      : "Portable: settings and saves in this folder (user)";
+        Button buttons[8];
         int nb = 0;
         if (can_update && st != RUNNING) buttons[nb++] = (Button){456, 10, 160, 22, update_label, B_UPDATE};
         if (st == IDLE || st == DONE || st == FAILED) {
             /* the disc: a zip (or a .7z, .cue or .chd file), or the folder it was unzipped to */
-            buttons[nb++] = (Button){24, 340, 140, 32, "Disc zip...", B_CHOOSE};
-            buttons[nb++] = (Button){172, 340, 140, 32, "Disc folder...", B_FOLDER};
-            if (have_exe && st != FAILED) buttons[nb++] = (Button){320, 340, 90, 32, "Play", B_PLAY};
-            if (have_game && st != DONE) buttons[nb++] = (Button){418, 340, 100, 32, "Rebuild", B_REBUILD};
-            buttons[nb++] = (Button){526, 340, 90, 32, "Quit", B_QUIT};
-            buttons[nb++] = (Button){24, 378, 592, 16, NULL, B_PORTABLE};   /* the checkbox's row */
+            buttons[nb++] = (Button){24, 340 + off, 140, 32, "Disc zip...", B_CHOOSE};
+            buttons[nb++] = (Button){172, 340 + off, 140, 32, "Disc folder...", B_FOLDER};
+            if (have_exe && st != FAILED) buttons[nb++] = (Button){320, 340 + off, 90, 32, "Play", B_PLAY};
+            if (have_game && st != DONE) buttons[nb++] = (Button){418, 340 + off, 100, 32, "Rebuild", B_REBUILD};
+            buttons[nb++] = (Button){526, 340 + off, 90, 32, "Quit", B_QUIT};
+            /* the checkboxes' rows: their boxes and labels */
+            buttons[nb++] = (Button){24, 378 + off, 20 + 8.0f * (float)strlen(portable_label), 16, NULL, B_PORTABLE};
+            buttons[nb++] = (Button){516, 378 + off, 100, 16, NULL, B_SCREEN};
         }
 
         SDL_Event ev;
@@ -365,6 +443,11 @@ int main(int argc, char **argv)
                     } else if (buttons[i].id == B_PORTABLE) {
                         toggle_portable(win);
                         portable = portable_on();
+                    } else if (buttons[i].id == B_SCREEN) {
+                        four_three = !four_three;
+                        save_screen();
+                        lay_out(win, ren);
+                        break;   /* (the buttons were for the other layout) */
                     }
                 }
             }
@@ -386,30 +469,31 @@ int main(int argc, char **argv)
 
         SDL_LockMutex(mtx);
         if (st == IDLE) {
-            SDL_RenderDebugText(ren, 24, 60, "1. Your disc image: a .cue with its .bin/.img/.iso/.wav tracks, or a .chd.");
-            SDL_RenderDebugText(ren, 24, 72, "   Zipped: click \"Disc zip...\" and pick the zip (or the .cue or .chd).");
-            SDL_RenderDebugText(ren, 24, 84, "   Unzipped: click \"Disc folder...\" and pick the folder it is in.");
-            SDL_RenderDebugText(ren, 24, 96, "   The original Japanese disc or the English translation: either works.");
-            SDL_RenderDebugText(ren, 24, 112, "2. Setup checks the disc, extracts it, recompiles the game code");
+            SDL_RenderDebugText(ren, 24, line_y(60), "1. Your disc image: a .cue with its .bin/.img/.iso/.wav tracks, or a .chd.");
+            SDL_RenderDebugText(ren, 24, line_y(72), "   Zipped: click \"Disc zip...\" and pick the zip (or the .cue or .chd).");
+            SDL_RenderDebugText(ren, 24, line_y(84), "   Unzipped: click \"Disc folder...\" and pick the folder it is in.");
+            SDL_RenderDebugText(ren, 24, line_y(96), "   The original Japanese disc or the English translation: either works.");
+            SDL_RenderDebugText(ren, 24, line_y(112), "2. Setup checks the disc, extracts it, recompiles the game code");
             if (rondo_appimage()) {
                 char where[100];
                 snprintf(where, sizeof where, "   in %.70s", base_dir);
-                SDL_RenderDebugText(ren, 24, 124, "   and builds the game (about a minute; longer on a Steam Deck)");
-                SDL_RenderDebugText(ren, 24, 136, where);
+                SDL_RenderDebugText(ren, 24, line_y(124), "   and builds the game (about a minute; longer on a Steam Deck)");
+                SDL_RenderDebugText(ren, 24, line_y(136), where);
             } else {
-                SDL_RenderDebugText(ren, 24, 124, "   and builds " GAME_PROGRAM " in this folder. This takes about a minute.");
+                SDL_RenderDebugText(ren, 24, line_y(124), "   and builds " GAME_PROGRAM " in this folder. This takes about a minute.");
             }
-            SDL_RenderDebugText(ren, 24, 152, "3. Click Play.");
-            SDL_RenderDebugText(ren, 24, 164, "Both languages: choose the other disc afterwards; it is added next");
-            SDL_RenderDebugText(ren, 24, 176, "to the first, and the game's menu switches (Language).");
-            SDL_RenderDebugText(ren, 24, 200, "Rebuild: recompile again, including code " GAME_PROGRAM " recorded");
-            SDL_RenderDebugText(ren, 24, 212, "while you played (misses.txt).");
-            SDL_RenderDebugText(ren, 24, 236, "No game files are included with RondoRecomp.");
-            SDL_RenderDebugText(ren, 24, 260, "Virtual Console: a Wii .wad (Japanese) or a Wii U title (English: its");
-            SDL_RenderDebugText(ren, 24, 272, "folder, a zip or a 7z). Encrypted: Setup needs your console's key file");
-            SDL_RenderDebugText(ren, 24, 284, "(keys.txt as Cemu's, otp.bin, keys.bin), or a .wad installed in Dolphin.");
+            SDL_RenderDebugText(ren, 24, line_y(152), "3. Click Play.");
+            SDL_RenderDebugText(ren, 24, line_y(164), "Both languages: choose the other disc afterwards; it is added next");
+            SDL_RenderDebugText(ren, 24, line_y(176), "to the first, and the game's menu switches (Language).");
+            SDL_RenderDebugText(ren, 24, line_y(200), "Rebuild: recompile again, including code " GAME_PROGRAM " recorded");
+            SDL_RenderDebugText(ren, 24, line_y(212), "while you played (misses.txt).");
+            SDL_RenderDebugText(ren, 24, line_y(236), "No game files are included with RondoRecomp.");
+            SDL_RenderDebugText(ren, 24, line_y(260), "Virtual Console: a Wii .wad (Japanese) or a Wii U title (English: its");
+            SDL_RenderDebugText(ren, 24, line_y(272), "folder, a zip or a 7z). Encrypted: Setup needs your console's key file");
+            SDL_RenderDebugText(ren, 24, line_y(284), "(keys.txt as Cemu's, otp.bin, keys.bin), or a .wad installed in Dolphin.");
         } else {
-            int first = n_lines > 30 ? n_lines - 30 : 0;
+            int shown = 30 + (int)off / 9;   /* the last lines of the log: 30, 38 in the 4:3 layout */
+            int first = n_lines > shown ? n_lines - shown : 0;
             float y = 52;
             SDL_SetRenderDrawColor(ren, 200, 200, 200, 255);
             for (int i = first; i < n_lines; i++, y += 9) SDL_RenderDebugText(ren, 24, y, lines[i]);
@@ -419,7 +503,7 @@ int main(int argc, char **argv)
                 Uint64 t = (SDL_GetTicks() - t0) / 150;
                 if (prog_pct >= 0 && prog_pct < 100) {
                     snprintf(busy, sizeof busy, "%c %s", spin[t % 4], prog_what);
-                    SDL_FRect bar = {24, 322, 592, 8}, fill = {24, 322, 5.92f * (float)prog_pct, 8};
+                    SDL_FRect bar = {24, 322 + off, 592, 8}, fill = {24, 322 + off, 5.92f * (float)prog_pct, 8};
                     SDL_SetRenderDrawColor(ren, 60, 50, 70, 255);
                     SDL_RenderFillRect(ren, &bar);
                     SDL_SetRenderDrawColor(ren, 200, 150, 80, 255);
@@ -428,42 +512,31 @@ int main(int argc, char **argv)
                     snprintf(busy, sizeof busy, "%c working...", spin[t % 4]);
                 }
                 SDL_SetRenderDrawColor(ren, 230, 200, 140, 255);
-                SDL_RenderDebugText(ren, 24, 344, busy);
+                SDL_RenderDebugText(ren, 24, 344 + off, busy);
             }
         }
         SDL_UnlockMutex(mtx);
         if (st == DONE) {
             SDL_SetRenderDrawColor(ren, 140, 220, 140, 255);
-            SDL_RenderDebugText(ren, 24, 324, run_mode != MODE_UPDATE ? "Done. " GAME_PROGRAM " is ready."
+            SDL_RenderDebugText(ren, 24, 324 + off, run_mode != MODE_UPDATE ? "Done. " GAME_PROGRAM " is ready."
                                               : run_result == 3        ? "This is the latest version."
                                                                        : "Updated. Click Play.");
         }
         if (dialog_error[0] && st != RUNNING) {
             SDL_SetRenderDrawColor(ren, 240, 120, 110, 255);
-            SDL_RenderDebugText(ren, 24, 312, dialog_error);
+            SDL_RenderDebugText(ren, 24, 312 + off, dialog_error);
         }
         if (st == FAILED) {
             SDL_SetRenderDrawColor(ren, 240, 120, 110, 255);
-            SDL_RenderDebugText(ren, 24, 324, run_mode == MODE_IMPORT && run_result == 4
+            SDL_RenderDebugText(ren, 24, 324 + off, run_mode == MODE_IMPORT && run_result == 4
                                                   ? "Setup needs your console's key file: choose it (Setup then goes on)."
                                                   : "Setup did not finish; see the messages above.");
         }
         for (int i = 0; i < nb; i++) {
-            if (buttons[i].id != B_PORTABLE) {
-                draw_button(ren, &buttons[i], hit(&buttons[i], mx, my));
-                continue;
-            }
             bool hover = hit(&buttons[i], mx, my);
-            SDL_FRect box = {24, 380, 12, 12};
-            SDL_SetRenderDrawColor(ren, 200, 170, 120, 255);
-            SDL_RenderRect(ren, &box);
-            if (portable) {
-                SDL_FRect tick = {27, 383, 6, 6};
-                SDL_RenderFillRect(ren, &tick);
-            }
-            SDL_SetRenderDrawColor(ren, hover ? 255 : 200, hover ? 230 : 190, hover ? 170 : 170, 255);
-            SDL_RenderDebugText(ren, 44, 382, rondo_appimage() ? "Portable: settings and saves next to the AppImage (user)"
-                                                               : "Portable: settings and saves in this folder (user)");
+            if (buttons[i].id == B_PORTABLE) draw_check(ren, &buttons[i], portable_label, portable, hover);
+            else if (buttons[i].id == B_SCREEN) draw_check(ren, &buttons[i], "4:3 screen", four_three, hover);
+            else draw_button(ren, &buttons[i], hover);
         }
         SDL_RenderPresent(ren);
         SDL_Delay(16);

@@ -24,9 +24,30 @@
 #define RONDO_GROUPS 95          /* main loader table entries (see docs/findings.md) */
 #define RONDO_LOADER 0x6FD8      /* 6A:6FD8, A = group */
 #define REGIONS_PER_FILE 800
+#define FILE_BYTES (256 * 1024)  /* a generated file is closed past this size */
 
 static GenLog g_log;
 static bool g_verbose;
+static GenProgress g_progress;
+static int g_pct = -1;
+
+/* The run's progress, by its parts' share of the time it takes (rondo_gen --progress: the
+ * capture run 12.7 s of 13.7, the overlay groups 0.2, finding the code 0.6, writing it 0.2). */
+enum { P_CAPTURE = 0, P_GROUPS = 92, P_CODE = 94, P_WRITE = 97 };
+
+static void progress(int pct)
+{
+    if (pct > 100) pct = 100;
+    if (!g_progress || pct <= g_pct) return;
+    g_pct = pct;
+    g_progress(pct);
+}
+
+/* part `from`-`to` of the run, `done` of `total` through it */
+static void progress_in(int from, int to, long done, long total)
+{
+    progress(from + (int)((long)(to - from) * done / (total > 0 ? total : 1)));
+}
 
 static void say(const char *fmt, ...)
 {
@@ -249,6 +270,7 @@ static bool materialize(const char *cue, GenStats *st, char *err, int err_len)
     for (int f = 40; f < CAPTURE_FRAMES; f++) {
         p->pad = capture_pad(f);
         pce_run_frame(p);
+        if (f % 200 == 0) progress_in(P_CAPTURE, P_GROUPS, f, CAPTURE_FRAMES);
     }
     p->on_entry = NULL;
     st->capture_seeds = n_seeds;
@@ -258,6 +280,7 @@ static bool materialize(const char *cue, GenStats *st, char *err, int err_len)
     for (int pass = 0; pass < 2; pass++) {
         memcpy(p, s0, sizeof(Pce));
         for (int g = 0; g < RONDO_GROUPS; g++) {
+            progress_in(P_GROUPS, P_CODE, pass * RONDO_GROUPS + g, 2 * RONDO_GROUPS);
             if (pass == 0) memcpy(p, s0, sizeof(Pce));
             p->cpu.mpr[2] = 0x69;
             p->cpu.mpr[3] = 0x6A;
@@ -948,6 +971,9 @@ bool gen_run(const GenOptions *o, GenStats *st, GenLog log, char *err, int err_l
     memset(st, 0, sizeof *st);
     g_log = log;
     g_verbose = o->verbose;
+    g_progress = o->progress;
+    g_pct = -1;
+    progress(0);
     int max_total = o->max_regions > 0 ? o->max_regions * 16 : 2000000;   /* instruction safety cap */
     init_ops();
 
@@ -955,6 +981,7 @@ bool gen_run(const GenOptions *o, GenStats *st, GenLog log, char *err, int err_l
     if (!materialize(o->cue, st, err, err_len)) return false;
     say("  capture run: %d entry points; %d overlay loads; %d distinct bank images",
         st->capture_seeds, st->groups_loaded, n_images);
+    progress(P_CODE);
 
     /* seeds: those found by the capture run, plus seed files (bank, address, block hash) */
     for (int fi = 0; fi < 4 && o->seed_files[fi]; fi++) {
@@ -1023,6 +1050,7 @@ bool gen_run(const GenOptions *o, GenStats *st, GenLog log, char *err, int err_l
     work = NULL;
     n_work = cap_work = 0;
 
+    progress(P_CODE + (P_WRITE - P_CODE) / 2);
     /* stores to constant addresses that land on an operand of the chunk's own code: the
      * game patches that instruction while running, so read the operand at runtime */
     for (int ci = 0; ci < n_chunks; ci++) {
@@ -1078,7 +1106,9 @@ bool gen_run(const GenOptions *o, GenStats *st, GenLog log, char *err, int err_l
     int file_index = 0, in_file = 0;
     size_t bytes = 0;
 
+    progress(P_WRITE);
     for (int ci = 0; ci < n_chunks; ci++) {
+        progress_in(P_WRITE, 99, ci, n_chunks);
         Chunk *k = chunks[ci];
         if (!k->n_ins) continue;
         const Image *im = images[k->img];
@@ -1147,7 +1177,7 @@ bool gen_run(const GenOptions *o, GenStats *st, GenLog log, char *err, int err_l
                 n++;
             }
             View v = {im, k->base, k->inc, k->has_vol ? k->vol : NULL, ins, n};
-            if (!f || in_file >= 40) {
+            if (!f || in_file >= 40 || ftell(f) >= FILE_BYTES) {   /* (files compile at once: Setup) */
                 if (f) { bytes += (size_t)ftell(f); fclose(f); }
                 char name[64];
                 snprintf(name, sizeof name, "regions_%03d.c", file_index++);
@@ -1226,6 +1256,7 @@ bool gen_run(const GenOptions *o, GenStats *st, GenLog log, char *err, int err_l
         "%d entry points, %d instructions from %d of %d seeds; %d C files, %.1f MB of C",
         n_uniq, n_comps, st->volatile_entries, ne, st->instructions, st->seeds_matched, st->seeds, st->files,
         (double)bytes / 1e6);
+    progress(100);
     for (int u = 0; u < n_uniq; u++) { free(uniq[u].ranges); free(uniq[u].comp_of); }
     for (int c0 = 0; c0 < n_comps; c0++) free(comps[c0].ranges);
     free(comps);

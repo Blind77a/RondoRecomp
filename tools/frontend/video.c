@@ -31,13 +31,19 @@ void video_free(Video *v)
     SDL_zerop(v);
 }
 
-void video_upload(Video *v, const uint32_t *fb, int w, int h, int pitch)
+void video_upload(Video *v, const uint32_t *fb, int w, int h, int pitch, int wide)
 {
     if (w <= 0 || h <= 0) return;
     SDL_Rect r = {0, 0, w, h};
     SDL_UpdateTexture(v->frame, &r, fb, pitch * 4);
     v->src_w = w;
     v->src_h = h;
+    v->src_wide = wide > 0 && w > 2 * wide ? wide : 0;
+}
+
+double video_picture_aspect(const Settings *s)
+{
+    return s->aspect == ASPECT_SQUARE ? 256.0 / 224.0 : 4.0 / 3.0;
 }
 
 /* Where the picture goes in a ww x wh window. */
@@ -45,8 +51,10 @@ static SDL_FRect place(const Video *v, const Settings *s, int ww, int wh)
 {
     float sw = (float)v->src_w, sh = (float)v->src_h;
     if (s->aspect == ASPECT_STRETCH) return (SDL_FRect){0, 0, (float)ww, (float)wh};
-    /* aspect of the picture: a TV's 4:3, or square pixels */
-    float ar = s->aspect == ASPECT_SQUARE ? sw / sh : 4.0f / 3.0f;
+    /* aspect of the picture: a TV's 4:3 (for the game's 256 pixels; widescreen adds to the
+     * width at the same pixel shape), or square pixels */
+    float base = sw - 2.0f * (float)v->src_wide;
+    float ar = s->aspect == ASPECT_SQUARE ? sw / sh : 4.0f / 3.0f * sw / base;
     float dh = (float)wh, dw = dh * ar;
     if (dw > (float)ww) { dw = (float)ww; dh = dw / ar; }
     if (s->scaling == SCALE_WHOLE) {
@@ -62,26 +70,40 @@ static SDL_FRect place(const Video *v, const Settings *s, int ww, int wh)
     return (SDL_FRect){floorf(((float)ww - dw) / 2), floorf(((float)wh - dh) / 2), dw, dh};
 }
 
+/* The sharp copy and the effect's buffer are made at least this wide in game pixels, the
+ * widest widescreen picture (256 + 2 * 56): a picture growing or shrinking by a few columns a
+ * frame (into or out of widescreen) then draws into part of the same textures instead of
+ * making new ones of several megapixels every frame, which stalls the GPU. */
+#define WIDEST_PICTURE 368
+
 /* FILTER_SHARP: blow the picture up by a whole factor with hard edges, then scale the rest
- * of the way smoothly, so pixels stay crisp but all come out the same size. */
+ * of the way smoothly, so pixels stay crisp but all come out the same size. The copy is in
+ * the texture's top left: src_w * sharp_k by src_h * sharp_k. */
 static SDL_Texture *sharp_copy(Video *v, float dw, float dh)
 {
     int k = (int)ceilf(fmaxf(dw / (float)v->src_w, dh / (float)v->src_h));
     if (k < 1) k = 1;
     while (k > 1 && (v->src_w * k > 8192 || v->src_h * k > 8192)) k--;
     int tw = v->src_w * k, th = v->src_h * k;
-    if (!v->sharp || v->sharp_w != tw || v->sharp_h != th) {
+    if (!v->sharp || v->sharp_k != k || v->sharp_h != th || v->sharp_w < tw) {
+        int aw = (v->src_w > WIDEST_PICTURE ? v->src_w : WIDEST_PICTURE) * k;
+        if (aw > 8192) aw = tw;
         if (v->sharp) SDL_DestroyTexture(v->sharp);
-        v->sharp = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, tw, th);
+        v->sharp = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, aw, th);
         if (!v->sharp) return NULL;
         SDL_SetTextureScaleMode(v->sharp, SDL_SCALEMODE_LINEAR);
-        v->sharp_w = tw;
+        v->sharp_w = aw;
         v->sharp_h = th;
+        v->sharp_k = k;
     }
     SDL_SetTextureScaleMode(v->frame, SDL_SCALEMODE_NEAREST);
     SDL_SetRenderTarget(v->ren, v->sharp);
-    SDL_FRect src = {0, 0, (float)v->src_w, (float)v->src_h};
-    SDL_RenderTexture(v->ren, v->frame, &src, NULL);
+    if (tw < v->sharp_w) {   /* nothing of a wider picture beside it, for the smooth scaling */
+        SDL_SetRenderDrawColor(v->ren, 0, 0, 0, 255);
+        SDL_RenderClear(v->ren);
+    }
+    SDL_FRect src = {0, 0, (float)v->src_w, (float)v->src_h}, to = {0, 0, (float)tw, (float)th};
+    SDL_RenderTexture(v->ren, v->frame, &src, &to);
     SDL_SetRenderTarget(v->ren, NULL);
     return v->sharp;
 }
@@ -93,7 +115,7 @@ static SDL_Texture *picture(Video *v, const Settings *s, float dw, float dh, SDL
     if (s->filter == FILTER_SHARP) {
         SDL_Texture *t = sharp_copy(v, dw, dh);
         if (t) {
-            *part = (SDL_FRect){0, 0, (float)v->sharp_w, (float)v->sharp_h};
+            *part = (SDL_FRect){0, 0, (float)(v->src_w * v->sharp_k), (float)(v->src_h * v->sharp_k)};
             return t;
         }
     }
@@ -115,7 +137,7 @@ typedef struct Look {
     float mask;       /* phosphor stripes: how far each dims the other two colours */
     float boost;      /* the picture added again, making up for the darkening */
     float glow;       /* halation */
-    float vignette;   /* darker towards the edges and corners */
+    float vignette;   /* darker toward the edges and corners */
     float curve;      /* how far the glass bulges */
     bool soft;        /* composite: blurred sideways */
 } Look;
@@ -209,7 +231,7 @@ static SDL_Texture *phosphors(Video *v, float depth)
     return v->mask;
 }
 
-/* Black, clear in the middle, darkening towards the edges and most into the corners. */
+/* Black, clear in the middle, darkening toward the edges and most into the corners. */
 static SDL_Texture *vignette(Video *v)
 {
     if (v->vignette) return v->vignette;
@@ -227,16 +249,22 @@ static SDL_Texture *vignette(Video *v)
     return v->vignette;
 }
 
-/* `tex` over dst at `alpha`, on curved glass: a mesh whose sides bow outward (x scaled by
- * 1 - k y^2, y by 1 - k x^2, from the middle); k = 0 is flat. (Geometry takes its alpha from
- * the vertices, not the texture's alpha mod.) */
-static void draw_on_glass(SDL_Renderer *ren, SDL_Texture *tex, SDL_FRect dst, float k, float alpha)
+/* `tex` (the part `src` of it; NULL: all) over dst at `alpha`, on curved glass: a mesh whose
+ * sides bow outward (x scaled by 1 - k y^2, y by 1 - k x^2, from the middle); k = 0 is flat.
+ * (Geometry takes its alpha from the vertices, not the texture's alpha mod.) */
+static void draw_on_glass(SDL_Renderer *ren, SDL_Texture *tex, const SDL_FRect *src, SDL_FRect dst, float k, float alpha)
 {
     if (k <= 0) {
         SDL_SetTextureAlphaModFloat(tex, alpha);
-        SDL_RenderTexture(ren, tex, NULL, &dst);
+        SDL_RenderTexture(ren, tex, src, &dst);
         SDL_SetTextureAlphaModFloat(tex, 1.0f);
         return;
+    }
+    float u0 = 0, v0 = 0, us = 1, vs = 1;
+    if (src) {
+        float tw = 1, th = 1;
+        SDL_GetTextureSize(tex, &tw, &th);
+        u0 = src->x / tw, v0 = src->y / th, us = src->w / tw, vs = src->h / th;
     }
     enum { NX = 48, NY = 36 };
     static SDL_Vertex vtx[(NX + 1) * (NY + 1)];
@@ -247,7 +275,7 @@ static void draw_on_glass(SDL_Renderer *ren, SDL_Texture *tex, SDL_FRect dst, fl
             float u = (float)i / NX, w = (float)j / NY, x = u * 2 - 1, y = w * 2 - 1;
             float sx = x * (1 - k * y * y), sy = y * (1 - k * x * x);
             vtx[n++] = (SDL_Vertex){{dst.x + (sx + 1) * 0.5f * dst.w, dst.y + (sy + 1) * 0.5f * dst.h}, {1, 1, 1, alpha},
-                                    {u, w}};
+                                    {u0 + u * us, v0 + w * vs}};
         }
     for (int j = 0; j < NY; j++)
         for (int i = 0; i < NX; i++) {
@@ -279,14 +307,19 @@ static bool draw_effect(Video *v, const Settings *s, SDL_FRect dst)
     Look l = look_for(s);
     int tw = (int)dst.w, th = (int)dst.h;
     if (tw < 8 || th < 8) return false;
-    if (!v->fx || v->fx_w != tw || v->fx_h != th) {
+    if (!v->fx || v->fx_w < tw || v->fx_h < th) {
+        /* as big as the window: the picture's size on it can change every frame (widescreen) */
+        int ww = tw, wh = th;
+        SDL_GetRenderOutputSize(ren, &ww, &wh);
+        if (ww < tw) ww = tw;
+        if (wh < th) wh = th;
         if (v->fx) SDL_DestroyTexture(v->fx);
-        v->fx = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, tw, th);
+        v->fx = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, ww, wh);
         if (!v->fx) return false;
         SDL_SetTextureScaleMode(v->fx, SDL_SCALEMODE_LINEAR);
         SDL_SetTextureBlendMode(v->fx, SDL_BLENDMODE_NONE);
-        v->fx_w = tw;
-        v->fx_h = th;
+        v->fx_w = ww;
+        v->fx_h = wh;
     }
     SDL_FRect part, all = {0, 0, (float)tw, (float)th};
     SDL_Texture *pic = picture(v, s, dst.w, dst.h, &part);   /* (may draw into v->sharp first) */
@@ -317,7 +350,7 @@ static bool draw_effect(Video *v, const Settings *s, SDL_FRect dst)
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderFillRect(ren, &dst);
     }
-    draw_on_glass(ren, v->fx, dst, l.curve, 1.0f);
+    draw_on_glass(ren, v->fx, &all, dst, l.curve, 1.0f);
     SDL_Texture *mask = l.mask > 0 ? phosphors(v, l.mask) : NULL;
     if (mask) SDL_RenderTextureTiled(ren, mask, NULL, dst.h >= 1600 ? 2.0f : 1.0f, &dst);
     if (l.glow > 0) {
@@ -337,13 +370,13 @@ static bool draw_effect(Video *v, const Settings *s, SDL_FRect dst)
             float amount[2] = {l.glow * 0.5f, l.glow};
             for (int i = 0; i < 2; i++) {
                 SDL_SetTextureBlendMode(g[i], SDL_BLENDMODE_ADD);
-                draw_on_glass(ren, g[i], dst, l.curve, amount[i]);
+                draw_on_glass(ren, g[i], NULL, dst, l.curve, amount[i]);
                 SDL_SetTextureBlendMode(g[i], SDL_BLENDMODE_BLEND);
             }
         }
     }
     SDL_Texture *vig = l.vignette > 0 ? vignette(v) : NULL;
-    if (vig) draw_on_glass(ren, vig, dst, l.curve, l.vignette);
+    if (vig) draw_on_glass(ren, vig, NULL, dst, l.curve, l.vignette);
     return true;
 }
 
