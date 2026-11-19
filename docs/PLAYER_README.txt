@@ -209,6 +209,8 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            over (the default) or Black; see below
            Wide menus: with widescreen, the file select menus wide too (On, the default)
            or 4:3; see below
+           Title art: with widescreen, your own picture beside the title screen (On, the
+           default; only if you have made one); see below
            Aspect ratio: 4:3 (as on a TV), square pixels, or stretched to fill the screen
            Size: Fit screen (as big as the screen allows), or Whole multiples (every game
            pixel the same size; leaves a border)
@@ -274,7 +276,13 @@ enemies on that side come on and start moving further out, out of sight. Black s
 the picture centred with black past the wall. Video > Wide menus (on by default) draws
 the file select menus wide as well, their wavy background carried on to the sides (a
 page sliding over passes behind them); screens whose picture does not repeat (the title
-screen, story scenes) stay 4:3. Where the
+screen, story scenes) stay 4:3. The title screen can be widened with art of your own
+(Video > Title art): put a 396 x 225 PNG named title_sides.png in your profile folder (where
+settings.ini is), with the title's 256 x 225 picture in the middle (columns 70 to 325) and
+70 columns of your art on each side. The game recognises the title by the middle, draws your
+sides beside it and fades and flashes them with it; nothing else is changed. Any other still
+screen works the same way (the stage map: map_sides.png): every file ending in _sides.png is
+used, each for the screen its middle shows. They are yours alone: never part of a release. Where the
 picture goes from 4:3 to wide (the Prologue after its story scene, a scrolling room after a
 vertical one) it grows out to the sides over a moment. Turning it on takes effect from the
 next room. Widescreen is off in RetroAchievements' hardcore mode. The game was not made for

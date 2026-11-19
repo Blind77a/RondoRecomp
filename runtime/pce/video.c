@@ -278,6 +278,8 @@ void vdc_set_side_tiles(const uint16_t *left, const uint16_t *right)
     side_right = right;
 }
 const uint16_t *vdc_row_map_y(void) { return row_map_y; }
+static const uint16_t *map_fill;
+void vdc_set_map_fill(const uint16_t *fill) { map_fill = fill; }
 
 /* ---- timing ---------------------------------------------------------------- */
 
@@ -335,6 +337,13 @@ const uint8_t *vdc_row_bg_edge(void) { return row_bg_edge; }
 void vdc_set_row_clip(const uint8_t *rows) { row_clip = rows; }
 static uint64_t sprite_hide;
 void vdc_set_sprite_hide(uint64_t mask) { sprite_hide = mask; }
+static int move_lo, move_hi = -1, move_dx;
+void vdc_set_sprite_move(int pattern_lo, int pattern_hi, int dx)
+{
+    move_lo = pattern_lo;
+    move_hi = pattern_hi;
+    move_dx = dx;
+}
 
 /* x0: screen x of out[0] (negative in widescreen) */
 static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out)
@@ -357,6 +366,11 @@ static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out)
     for (int x = 0; x < w; x++) {
         int px = (sx + x) & (mw * 8 - 1);
         uint16_t e = map[px >> 3];
+        if (map_fill && w > 256 && (x0 + x < 0 || x0 + x >= 256)) {
+            /* beside the original 256 pixels: the map's own entry, or its fill */
+            uint16_t f = map_fill[(py >> 3) * VDC_FILL_W + ((px >> 3) & (VDC_FILL_W - 1))];
+            if (f != VDC_SIDE_NONE) e = f;
+        }
         if (sides) {
             int col = (sx + x) >> 3;   /* (arithmetic shift: floor) */
             int k = col < first ? first - 1 - col : col > last ? col - last - 1 : -1;
@@ -405,6 +419,7 @@ static void render_sprites(Vdc *d, int y, int x0, int w, uint16_t *out)
         if (x0 && sx >= 1024 - 32 + x0 - 32) sx -= 1024;
         sx -= x0;
         int pattern = (s[2] >> 1) & 0x3FF;
+        if (pattern >= move_lo && pattern <= move_hi) sx += move_dx;
         if (sw == 32) pattern &= ~1;
         if (h == 32) pattern &= ~2;
         if (h == 64) pattern &= ~6;

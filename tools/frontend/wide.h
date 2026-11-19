@@ -46,8 +46,6 @@ typedef struct Wide {
     uint8_t layer_x[8];    /* scroll layers' X, to notice scenery that scrolls */
     uint64_t move_history; /* bit per recent frame: some scenery layer moved */
     int scenery_moving;    /* how many of the last 60 frames it did */
-    int hud_x;             /* where the HUD was moved to (8 = original) */
-    int subweapon_x;       /* where the sub-weapon icon was moved to (28 = original) */
     /* rows of the picture: X scroll last frame, frames it has not changed, how a band
      * holding a parked object is cut off (VDC_CLIP_*; see wide_frame) */
     uint16_t row_x[PCE_FB_MAX_H];
@@ -56,6 +54,9 @@ typedef struct Wide {
     /* objects: screen X last frame, frames it has not changed */
     int16_t obj_x[0x58];
     uint8_t obj_still[0x58];
+    /* objects: kind last frame, and whether it had been drawn (edge spawns, wide_frame) */
+    uint8_t obj_kind[0x58];
+    bool obj_shown[0x58];
 } Wide;
 
 /* frames a band's scroll must stay put to count as parked (the sky moves every few frames,

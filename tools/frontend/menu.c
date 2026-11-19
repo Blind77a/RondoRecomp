@@ -84,6 +84,7 @@ static const Item VIDEO_ITEMS[] = {
     {IT_TOGGLE, "Widescreen", 0, F_BOOL(widescreen), WIDES, 2, 0, MENU_SETTINGS_CHANGED},
     {IT_TOGGLE, "Level ends", 0, F_BOOL(wide_edges), EDGES, 2, 0, MENU_SETTINGS_CHANGED},
     TOGGLE("Wide menus", wide_menus, MENU_SETTINGS_CHANGED),
+    TOGGLE("Title art", title_art, MENU_SETTINGS_CHANGED),
     CHOICE("Aspect ratio", aspect, ASPECTS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Size", scaling, SCALINGS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Filter", filter, FILTERS, 0, MENU_SETTINGS_CHANGED),
