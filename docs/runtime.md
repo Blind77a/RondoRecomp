@@ -257,7 +257,32 @@ disc as it goes):
   crossing the left edge). The host marks objects fixed to the screen, not the HUD, on it
   and moving (a banner or a generator does not). Checked over 600 frames of the rain:
   game RAM unchanged, interpreter and recompiled pictures identical.
-- The HUD (slots $57, $56) is moved to the left edge of the widened picture.
+- The HUD (slots $57, $56) is moved to the left edge of the widened picture (from anywhere
+  widescreen could have put it, so a save state from another session is put right). A boss's
+  health bar (slot $55, type 5, sliding in from X 254 to 216) cannot be moved as an object
+  (past 253 its own code slides it in again), so its sprites (patterns $1F8-$1FF) are drawn
+  at the picture's right edge instead (`vdc_set_sprite_move`).
+- Edge spawns: some rooms send enemies in from fixed places just past the screen's edges,
+  whatever the camera does (Stage 2's castle hall: ghouls, kind $29, at X -24 / 280, and
+  kind $31 at 272), which would put them inside the wider picture. On the frame such an
+  object is first drawn at -16 / -24 / -32 or 272 / 280 / 288 (not fixed to the screen, not
+  the HUD; things thrown from off screen come out where the thrower is), it moves out by the
+  picture's extra width on that side, keeping its distance from the edge, at most 80 px past
+  the screen (`EDGE_SPAWN_MAX`: kind $31 removes itself from 86 px out).
+- Scenery moved round: Stage 2's bridge pillars are three objects (kind $44, 128 px apart)
+  the game moves 384 px to the other side once one passes X -32 or 287, out of the 4:3
+  picture but inside the wider one. Objects of a kind seen jumping by 376-392 px, or a row
+  (every object of a kind, three or four, exactly 128 px apart: not a splash's particles,
+  three of which can line up by chance and, echoed, slowed the bridge boss), are echoed like the rain (drawn again 256 px
+  either side, the copies kept only past the 256 pixels on their own side), which puts a
+  copy where the next pillar round would be. Forgotten as each room starts.
+- Scenery bands drawn only as far as the 4:3 picture shows them (Stage 2's bridge: the
+  distant hills, castle and trees, blank tiles over 16 of the map's 64 columns): each map
+  row seen scrolled apart from the playfield in the room (a row a playfield line shows in
+  the same frame excepted) has its longest blank stretch, if 12 tiles or more, filled from
+  both ends with the tile most often after (before) the one at its end in the band's rows
+  (`scenery_fill`), drawn beside the original 256 pixels only (`vdc_set_map_fill`, by map
+  position, so it scrolls with the band). Gaps between clouds are shorter and left alone.
 - Level ends (Video > Level ends, on by default; `Wide.edges`): within the extension of a
   scrolling room's left or right limit the picture is shifted (`vdc_set_wide_shift`,
   host-side, latched per frame like `fb_wide`; the original 256 then start at
@@ -292,6 +317,23 @@ disc as it goes):
   97% of the side tiles fill for 8 frames in a row (`MENU_FRAMES`); then held with the last
   sides that filled for up to 60 frames that do not (`MENU_HOLD`: a page sliding over puts
   its frames at the edges), so it does not flick to 4:3. `rondo_headless --wide-menus`.
+- Title art (Video > Title art, on by default; `titleart.c`): the title's clouds have no
+  repeat, so its sides come from the player's own `title_sides.png` in the profile folder
+  (any `*_sides.png` there, up to 8: each still screen its own, the stage map's too, the one
+  that matched last tried first)
+  (396 x 225: the title's 256 x 225 picture at columns 70-325 as the reference, 70 columns of
+  art each side in colours of the reference's; loaded with SDL_LoadPNG, SDL 3.4). Every
+  colour of the reference is a palette entry, and the fade-in, the clouds' shimmer and the
+  lightning change the entries, so each refresh (not gameplay, picture not widened by the
+  game) every reference colour is looked up where the reference has it in the game's raw
+  picture (every 2nd pixel each way, the prompt's rows 138-156 left out; before Smooth
+  dithering) and the sides are drawn with what it has become. The frame is the title when
+  92% of those samples agree with their colour's most common value (85% once shown: the
+  lightning bolt is a sprite) and, to start, at least 6 colours other than black are up; a
+  black screen keeps it. `rondo_headless --title-art FILE` (the PNG's pixels, raw ARGB)
+  writes shots of the title with it. The player's file is never shipped (art made from
+  Konami's title). The Setup SDK's source list (`tools/make_sdk.cmake`) now has
+  `dedither.c` and `titleart.c`.
 
 A room is shown wide when the background changes are in and it scrolls sideways, or when it
 is one screen wide but its scenery scrolls past (the carriage chase); bands of rows holding

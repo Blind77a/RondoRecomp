@@ -42,6 +42,7 @@
 #include "update.h"
 #include "wide.h"
 #include "dedither.h"
+#include "titleart.h"
 
 #define FRAME_RATE (7159090.0 / (455.0 * 263.0))   /* 59.826 Hz */
 #define AUDIO_RATE 44100
@@ -159,6 +160,36 @@ static TitlePrompt prompt;   /* the title's PUSH RUN BUTTON! as this PC's button
 static Moves moves;          /* the Gameplay page's 8-way whip and limp whip (moves.h) */
 static MoveOptions move_opts;   /* this frame's: off in hardcore mode and the tests */
 static Wide wide;            /* 16:9 widescreen (wide.h): decided before every frame */
+/* the player's art beside still screens (titleart.h): every *_sides.png in the profile folder
+ * (title_sides.png, map_sides.png, ...), each recognised by its middle */
+#define MAX_ARTS 8
+static TitleArt arts[MAX_ARTS];
+static int n_arts, art_last;   /* (the one that matched last is tried first) */
+
+static void load_title_art(const char *dir)
+{
+    int count = 0;
+    char **names = SDL_GlobDirectory(dir, "*_sides.png", SDL_GLOB_CASEINSENSITIVE, &count);
+    for (int i = 0; names && i < count && n_arts < MAX_ARTS; i++) {
+        char path[1200];
+        snprintf(path, sizeof path, "%s%s", dir, names[i]);
+        SDL_Surface *s = SDL_LoadPNG(path);
+        if (!s) continue;
+        SDL_Surface *c = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888);
+        SDL_DestroySurface(s);
+        if (!c) continue;
+        if (c->w == TITLEART_W && c->h >= TITLEART_H - 1) {
+            TitleArt *t = &arts[n_arts++];
+            int h = c->h < TITLEART_H ? c->h : TITLEART_H;
+            for (int y = 0; y < h; y++) memcpy(t->px[y], (const uint8_t *)c->pixels + y * c->pitch, TITLEART_W * 4);
+            t->loaded = true;
+        } else {
+            SDL_Log("%s is %dx%d, not %dx%d: not used", names[i], c->w, c->h, TITLEART_W, TITLEART_H);
+        }
+        SDL_DestroySurface(c);
+    }
+    SDL_free(names);
+}
 
 /* A frame of the game. While rewinding (`live` false) the moves only draw: the frame shown is
  * one already played. */
@@ -577,6 +608,7 @@ int main(int argc, char **argv)
     SDL_CreateDirectory(states_dir);
     Settings set;
     settings_load(&set, settings_path);
+    load_title_art(pref_dir);
     if (showcase) {   /* the options it changes are kept next to the script, not in the profile */
         snprintf(settings_path, sizeof settings_path, "%s.settings.ini", showcase);
         char serr[300];
@@ -1290,8 +1322,29 @@ int main(int argc, char **argv)
                 }
                 fb = dd;
             }
-            video_upload(&video, fb + cut, pce.vdc.fb_w - 2 * cut, pce.vdc.fb_h, PCE_FB_MAX_W, have - cut);
-            video.src_wide_full = have;
+            /* Video > Title art: the player's art beside the title screen (titleart.h), while
+             * the picture is not widened by the game itself */
+            static uint32_t ta[PCE_FB_MAX_W * PCE_FB_MAX_H];
+            int ta_ext = wide.want < TITLEART_SIDE ? wide.want : TITLEART_SIDE;
+            /* (also when the game draws it wide: Wide menus keeps the file select wide for a
+             * moment after it, and the stage map comes straight after it: the 256 in the
+             * middle are compared) */
+            bool art = false;
+            if (n_arts && set.title_art && !test_mode && ta_ext > 0 && pce.vdc.fb_w - 2 * have == 256 && !game_playing(&pce))
+                for (int k = 0; k < n_arts && !art; k++) {
+                    int a = (art_last + k) % n_arts;
+                    if (titleart_compose(&arts[a], pce.vdc.fb + have, fb + have, pce.vdc.fb_h, PCE_FB_MAX_W, ta_ext, ta)) {
+                        art = true;
+                        art_last = a;
+                    }
+                }
+            if (art) {
+                video_upload(&video, ta, 256 + 2 * ta_ext, pce.vdc.fb_h, PCE_FB_MAX_W, ta_ext);
+                video.src_wide_full = ta_ext;
+            } else {
+                video_upload(&video, fb + cut, pce.vdc.fb_w - 2 * cut, pce.vdc.fb_h, PCE_FB_MAX_W, have - cut);
+                video.src_wide_full = have;
+            }
         }
         if (features_dir && !t_shots && pce.frame >= 17880) {
             /* screenshots: 16:9 window with each picture mode and screen effect, then the menu
