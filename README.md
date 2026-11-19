@@ -37,6 +37,8 @@ ISO/WAV/BIN tracks); everything derived from it goes to `work/`, which is git-ig
 - Rewinding up to 30 min that works like the Konami Castlevania collections
 - Compatible with the original PC Engine version, English patched, Wii, and Wii U versions
 - Full suite of video options including filters and screen effects
+- 16:9 widescreen (off by default), with the picture moving over at level ends instead of showing black, and the file select menus wide too
+- Smooth fades and smooth dithering (off by default): fades blended in 24-bit colour, and the game's checkerboard dithering drawn as the colour it stands for
 - Save stating
 - Cheats
 - Super Castlevania IV moves (Gameplay page): 8-way whipping and dove throwing, and a limp whip, after Pizzano's Super Rondo of Blood hack (RondoRecomp's own version)
@@ -69,7 +71,9 @@ Findings so far: [docs/findings.md](docs/findings.md).
   gold-and-umber frames with blackletter titles, with controller, keyboard and mouse.
 - An in-game menu (F1 / Back): video modes for 4K, 16:9 and ultrawide screens (4:3 with
   blurred sides, square pixels, stretch, integer scaling, sharp filtering), a 16:9 widescreen
-  option (off by default) that shows more of the level on each side, cinematic
+  option (off by default) that shows more of the level on each side (with the picture moving
+  over at level ends and the file select menus wide too), smooth fades and smooth dithering,
+  cinematic
   skipping, cheats (infinite health, hearts, lives), modern controller layout with
   sub-weapon / Item Crash / backflip buttons, rebindable controls (keys of your own to move, such
   as WASD, alongside the arrows), and a Japanese option (with your Japanese disc).
