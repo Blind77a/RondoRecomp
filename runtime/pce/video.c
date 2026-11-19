@@ -287,6 +287,8 @@ void vdc_set_side_tiles(const uint16_t *left, const uint16_t *right)
     side_right = right;
 }
 const uint16_t *vdc_row_map_y(void) { return row_map_y; }
+static bool side_real;
+void vdc_set_side_real(bool on) { side_real = on; }
 static const uint16_t *map_fill;
 void vdc_set_map_fill(const uint16_t *fill) { map_fill = fill; }
 
@@ -384,6 +386,7 @@ static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out)
             int col = (sx + x) >> 3;   /* (arithmetic shift: floor) */
             int k = col < first ? first - 1 - col : col > last ? col - last - 1 : -1;
             if (k >= VDC_SIDE_TILES) k = VDC_SIDE_TILES - 1;
+            if (side_real && col >= 0 && col < mw) k = -1;   /* the map's own, short of wrapping round */
             if (k >= 0) {
                 e = col < first ? sl[k] : sr[k];
                 if (e == VDC_SIDE_NONE) {
@@ -483,7 +486,7 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line)
     row_map_y[row] = (uint16_t)y;
     if (cr & 0x80) render_bg(d, y, x0, w, bg);
     if (cr & 0x40) render_sprites(d, row, x0, w, sp);
-    if (side_left && side_right && d->fb_wide) {
+    if (side_left && side_right && d->fb_wide && !side_real) {
         /* side tiles: no sprites beside the original 256 pixels (a game parks the ones it
          * does not use just off its screen) */
         for (int x = 0; x < w; x++)
