@@ -15,6 +15,100 @@
 
 /* ---- PSG ------------------------------------------------------------------------- */
 
+/* Band-limiting. A tone channel is a stepped wave (32 steps a cycle). The hardware's output
+ * reaches the speakers through analog filtering, so only the note's harmonics are heard.
+ * Taking the step under each 44.1 kHz output sample instead folds everything above 22 kHz
+ * back into the audible band as tones that are not the note's: in the game's chip music
+ * (the boss and pre-boss rooms, the stage clear, death and game over jingles) 11-27 dB
+ * under the notes, which made them sound sour and out of tune (issue #8). So each output
+ * sample is the stepped wave low-pass filtered: a windowed sinc (cutoff 20 kHz, Kaiser
+ * window, beta 8, BL_TAPS output samples long; flat to 15 kHz, -1 dB at 18 kHz, -50 dB at
+ * 24 kHz, -80 dB from 26 kHz) applied to the wave as it has played. That needs no state of
+ * its own (nothing new in save states): the wave's recent past follows from where it is now
+ * (phase) and how fast it moves (period). Any alias left is 88 dB or more under the notes up
+ * to 16 kHz. The tone channels come out BL_TAPS / 2 samples (0.27 ms) late, all alike. */
+#define BL_TAPS 24                    /* the filter's length, in output samples */
+#define BL_RES 256                    /* table entries per output sample */
+#define BL_CUTOFF (20000.0 / SND_RATE)
+#define BL_BETA 8.0
+/* Tones above this many wave steps an output sample (period under 27: above 4.1 kHz, sound
+ * effects only) are averaged over their output sample instead, which costs a step at most
+ * per step played rather than one per step in the filter's length. */
+#define BL_MAX_STEPS 3.0
+#define BL_PI 3.14159265358979323846
+
+static float bl_step[BL_TAPS * BL_RES + 1];   /* the filter's integral from its start: 0 .. 1 */
+
+static double bessel_i0(double x)
+{
+    double sum = 1, term = 1;
+    for (int k = 1; k < 60 && term > 1e-12 * sum; k++) {
+        term *= (x / (2 * k)) * (x / (2 * k));
+        sum += term;
+    }
+    return sum;
+}
+
+static void bl_init(void)
+{
+    static bool done;
+    if (done) return;
+    static double cum[BL_TAPS * BL_RES + 1];
+    double prev = 0, sum = 0;
+    for (int i = 0; i <= BL_TAPS * BL_RES; i++) {
+        double tau = (double)i / BL_RES, x = tau - BL_TAPS / 2.0, r = 2.0 * tau / BL_TAPS - 1.0;
+        double sinc = fabs(x) < 1e-12 ? 2.0 * BL_CUTOFF : sin(2.0 * BL_PI * BL_CUTOFF * x) / (BL_PI * x);
+        double h = sinc * bessel_i0(BL_BETA * sqrt(fmax(0.0, 1.0 - r * r))) / bessel_i0(BL_BETA);
+        if (i) sum += (prev + h) * 0.5 / BL_RES;
+        cum[i] = sum;
+        prev = h;
+    }
+    for (int i = 0; i <= BL_TAPS * BL_RES; i++) bl_step[i] = (float)(cum[i] / sum);
+    done = true;
+}
+
+/* the filter's integral up to x output samples into it */
+static inline float bl_at(double x)
+{
+    if (x >= BL_TAPS) return 1.0f;
+    double p = x * BL_RES;
+    int i = (int)p;
+    float f = (float)(p - i);
+    return bl_step[i] + (bl_step[i + 1] - bl_step[i]) * f;
+}
+
+/* the wave (centered on 0) summed over steps a .. b of its play (a < b; before 0 is earlier
+ * cycles) */
+static double wave_area(const PsgChannel *c, double a, double b)
+{
+    double acc = 0;
+    for (double x = a; x < b;) {
+        double step = floor(x), next = step + 1 < b ? step + 1 : b;
+        acc += (double)(c->wave[(int)step & 31] - 16) * (next - x);
+        x = next;
+    }
+    return acc;
+}
+
+/* A tone channel's output sample, `d` wave steps an output sample: its steps, each weighted
+ * by how much of the filter it fell in, back from the current one. */
+static float tone_sample(const PsgChannel *c, double d)
+{
+    if (d > BL_MAX_STEPS)   /* the output sample BL_TAPS / 2 back, averaged */
+        return (float)(wave_area(c, c->phase - d * (BL_TAPS / 2 + 0.5), c->phase - d * (BL_TAPS / 2 - 0.5)) / d);
+    int k = (int)c->phase;
+    double to = (c->phase - k) / d, per_step = 1.0 / d;   /* where the current step began, in output samples back */
+    float acc = 0, prev = 0;
+    for (int i = k;; i--) {
+        float cur = bl_at(to);
+        acc += (float)(c->wave[i & 31] - 16) * (cur - prev);
+        if (to >= BL_TAPS) break;
+        prev = cur;
+        to += per_step;
+    }
+    return acc;
+}
+
 /* Volume steps are 1.5 dB (5-bit channel volume) and 3 dB (4-bit balances); a 0 mutes. */
 static float level(int vol, int bal, int global_bal)
 {
@@ -97,9 +191,10 @@ static float psg_channel(PsgChannel *c, int index, double period_override)
     } else {
         double period = period_override > 0 ? period_override : (c->freq ? c->freq : 4096);
         if (period < 8) return 0.0f;                     /* above audible range: silent */
-        c->phase += PSG_PER_SAMPLE / period;
+        double d = PSG_PER_SAMPLE / period;               /* wave steps an output sample */
+        c->phase += d;
         if (c->phase >= 32.0) c->phase = fmod(c->phase, 32.0);
-        sample = c->wave[(int)c->phase & 31];
+        return tone_sample(c, d);                         /* band-limited (above) */
     }
     return (float)(sample - 16);
 }
@@ -233,6 +328,7 @@ static int16_t clamp16(int v) { return (int16_t)(v > 32767 ? 32767 : v < -32768 
 void sound_advance(Sound *s, uint64_t now)
 {
     if (now <= s->last_master) return;
+    bl_init();
     s->frac += (double)(now - s->last_master) * SND_RATE / MASTER_HZ;
     s->last_master = now;
     int n = (int)s->frac;

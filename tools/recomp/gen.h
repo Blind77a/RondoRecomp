@@ -4,6 +4,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+/* how far it has got, 0-100 (called as that changes) */
+typedef void (*GenProgress)(int pct);
+
 typedef struct GenOptions {
     const char *cue;            /* player's disc image */
     const char *seed_files[4];  /* seed lists (shipped seeds, player's misses); NULL-terminated */
@@ -12,6 +15,7 @@ typedef struct GenOptions {
     int max_region_instrs;      /* default 256 */
     int max_regions;            /* default 120000 */
     bool verbose;
+    GenProgress progress;       /* NULL: none */
 } GenOptions;
 
 typedef struct GenStats {

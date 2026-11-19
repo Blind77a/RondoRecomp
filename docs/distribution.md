@@ -37,8 +37,14 @@ This is the same model as LASRecomp: tools are shipped, the game-specific code i
 4. **Recompile**: the generator (built into Setup, no Python needed) walks the boot loader and the
    95 overlay groups from the main loader table, discovers code in every overlay, and emits C into
    `build/gen/`. Code that cannot be proven statically keeps an interpreter fallback.
-5. **Build**: `zig cc` compiles `build/gen/*.c` and links it with `sdk/librondo.a` and SDL3 into
-   `rondo.exe`. Builds are resumable: generated files that are already compiled are skipped.
+5. **Build**: `zig cc -c` compiles each source (the SDK's and `build/gen/*.c`) into an object of
+   its own in `build/obj/`, as many at once as the PC has threads (up to 16; the generator
+   closes a file of generated code past 256 KB, so they spread), then one `zig cc -O2` links
+   them with SDL3 into `rondo.exe`. Progress ("Building") is the share of the sources' bytes
+   compiled, to 90%; linking is the rest (on a first build it also prepares the C library).
+   Builds are resumable: zig's cache keeps every object, so what has not changed is not
+   compiled again. Recompiling reports its progress too ("Recompiling": the capture run's
+   frames, then the rest; `rondo_gen --progress` times the parts, `P_*` in gen.c).
    Setup first checks that zig's own files are there (`zig/lib/std/std.zig`) and names the
    folder for it (`ZIG_LIB_DIR`): zig.exe without them, as in a release unzipped only in part,
    otherwise fails with just "unable to find zig installation directory ...: FileNotFound"
@@ -83,7 +89,7 @@ What Setup does (about 40 s; the first build also prepares Zig's C library):
 3. recompile: run the game headless to find its code, emit C into `build/gen/` (docs/recompiler.md);
    from the English disc when it is installed (its capture run sees the most code), else the
    Japanese one. The other disc runs the same code, checked as it goes (99% native)
-4. build: `zig cc` compiles the runtime + generated C into `rondo.exe` (GUI subsystem), copies DLLs
+4. build: `zig cc` compiles the runtime + generated C, a file at a time on every thread, and links `rondo.exe` (GUI subsystem), copies DLLs
 
 `rondo.exe` uses `game/en/` and `game/ja/` next to itself (the menu's Language switches), keeps
 saves in `%APPDATA%\RondoRecomp` (`-ja` files for Japanese; in a `user` folder next to
@@ -311,7 +317,12 @@ From 1.0, an installation updates itself from the GitHub releases
    notice, and the Updates page shows the first points of the release notes' "New in"
    section.
 2. **Download.** "Download and install" starts `rondo_setup --update` with its output
-   piped back to the game, which shows each step and a progress bar. On Windows it runs
+   piped back to the game, which shows one bar for the whole update, the step's name and
+   the time so far. Setup turns each step's progress into a share of the whole
+   (`whole_progress` in install.c): downloading a quarter of a percent a megabyte (3-30%),
+   unpacking and installing a few percent, the rebuild the rest, its recompiling 45% of it
+   and its building 55% (as long as they take). An update from 1.2 or older shows the
+   steps' own bars instead: the whole is worked out by the Setup already installed. On Windows it runs
    without a console window (`tools/frontend/child.c`), and so does the compiler under it.
    Setup asks GitHub again and downloads the package into `update/`. Its size and SHA-256
    are checked against the asset's `digest` in GitHub's answer.

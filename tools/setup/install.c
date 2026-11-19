@@ -528,6 +528,59 @@ static bool download(const UpdateInfo *info, const char *path)
     return true;
 }
 
+/* ---- the update's progress as a whole ------------------------------------------------- */
+
+/* While Setup updates, each step's progress goes out as a share of the whole update, under
+ * the step's name ("    Rebuilding: building  57%"), so the game's Updates page shows one
+ * bar from start to end. Each step has a part of it, about as long as it takes: downloading
+ * by the package's size (a quarter of a percent a megabyte), the rebuild most of the rest,
+ * recompiling its first REBUILD_RECOMPILE percent and building the others (measured). */
+#define REBUILD_RECOMPILE 45
+static void (*step_hook)(const char *what, int pct);   /* Setup's own, the steps' */
+static const char *stage_label;
+static int stage_from, stage_to;
+static bool stage_rebuild;
+
+static void whole_progress(const char *what, int pct)
+{
+    int from = stage_from, to = stage_to;
+    char label[96];
+    snprintf(label, sizeof label, "%s", stage_label);
+    if (stage_rebuild) {   /* the rebuilding Setup's own steps */
+        int mid = from + (to - from) * REBUILD_RECOMPILE / 100;
+        if (!strcmp(what, "Recompiling")) {
+            to = mid;
+            snprintf(label, sizeof label, "%s: recompiling", stage_label);
+        } else if (!strcmp(what, "Building")) {
+            from = mid;
+            snprintf(label, sizeof label, "%s: building", stage_label);
+        } else {
+            return;
+        }
+    }
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    int whole = from + (to - from) * pct / 100;
+    step_hook(label, whole < 100 ? whole : 99);   /* (100: done, said at the end) */
+}
+
+static void stage(const char *label, int from, int to, bool rebuild)
+{
+    stage_label = label;
+    stage_from = from;
+    stage_to = to;
+    stage_rebuild = false;
+    whole_progress(label, 0);
+    stage_rebuild = rebuild;
+}
+
+/* the download's part of the whole: a quarter of a percent a megabyte, 3% to 30% */
+static int download_part(const UpdateInfo *info)
+{
+    int part = (int)(info->size / 4000000);
+    return part < 3 ? 3 : part > 30 ? 30 : part;
+}
+
 /* From the Linux AppImage (programs.h, tools/linux/AppRun): the new AppImage is downloaded next
  * to this one and builds the game; only then does it take this one's place (a rename: this one
  * keeps running from the old file). A failed build leaves the game as it was. */
@@ -542,6 +595,8 @@ static int update_appimage(const char *dir, const UpdateInfo *info)
     char fresh[1100];
     snprintf(fresh, sizeof fresh, "%s.new", app);
     say("\n[2/4] Downloading %s\n", info->asset);
+    int got = 2 + download_part(info);
+    stage("Downloading", 2, got, false);
     if (!download(info, fresh)) { SDL_RemovePath(fresh); return failed("downloading"); }
     if (chmod(fresh, 0755) != 0) {
         snprintf(g_err, sizeof g_err, "cannot make %s executable: %s", fresh, strerror(errno));
@@ -550,6 +605,7 @@ static int update_appimage(const char *dir, const UpdateInfo *info)
     }
 
     say("\n[3/4] Rebuilding " GAME_PROGRAM " with the new version\n");
+    stage("Rebuilding", got, 99, true);
     const char *args[] = {fresh, "--setup-cli", "--rebuild", "--out", dir, NULL};
     if (!setup_run(args)) {
         char why[512];
@@ -560,6 +616,7 @@ static int update_appimage(const char *dir, const UpdateInfo *info)
     }
 
     say("\n[4/4] Putting the new AppImage in place of %s\n", app);
+    stage("Installing", 99, 100, false);
     if (rename(fresh, app) != 0) {
         snprintf(g_err, sizeof g_err, "cannot replace %s: %s", app, strerror(errno));
         SDL_RemovePath(fresh);
@@ -570,9 +627,10 @@ static int update_appimage(const char *dir, const UpdateInfo *info)
 #endif
 }
 
-int setup_update(const char *dir, bool check_only)
+static int update_steps(const char *dir, bool check_only)
 {
     say("RondoRecomp Setup " RONDO_VERSION " (update)\n\n[1/5] Checking for a new version\n");
+    stage("Checking for a new version", 0, 2, false);
     char *body = NULL, err[256];
     size_t len = 0;
     int status = http_get_text(update_api_url(), update_user_agent(), &body, &len, err, sizeof err);
@@ -609,9 +667,12 @@ int setup_update(const char *dir, bool check_only)
     join(staged, sizeof staged, upd, "new");
 
     say("\n[2/5] Downloading %s\n", info.asset);
+    int got = 2 + download_part(&info);
+    stage("Downloading", 2, got, false);
     if (!download(&info, archive)) { remove_tree(upd); return failed("downloading"); }
 
     say("\n[3/5] Unpacking\n");
+    stage("Unpacking", got, got + 4, false);
     SDL_CreateDirectory(staged);
     bool unpacked = SDL_strcasecmp(info.asset + strlen(info.asset) - 4, ".zip") == 0 ? unpack_zip(archive, staged)
                                                                                    : unpack_tgz(archive, staged);
@@ -628,10 +689,12 @@ int setup_update(const char *dir, bool check_only)
     remove_tree(archive);
 
     say("\n[4/5] Installing RondoRecomp %s\n", info.version);
+    stage("Installing", got + 4, got + 6, false);
     Entries done;
     if (!install(dir, staged, &done)) { remove_tree(upd); return failed("installing"); }
 
     say("\n[5/5] Rebuilding " GAME_PROGRAM " with the new version\n");
+    stage("Rebuilding", got + 6, 100, true);
     char setup[1200];
     join(setup, sizeof setup, dir, SETUP_CLI_PROGRAM);
     const char *args[] = {setup, "--rebuild", "--out", dir, NULL};
@@ -646,4 +709,14 @@ int setup_update(const char *dir, bool check_only)
     remove_tree(upd);   /* all but files still in use (this Setup, the game): the game removes them later */
     say("\nUpdated to RondoRecomp %s.\n", info.version);
     return 0;
+}
+
+int setup_update(const char *dir, bool check_only)
+{
+    step_hook = setup_progress_hook;
+    setup_progress_hook = whole_progress;
+    int r = update_steps(dir, check_only);
+    setup_progress_hook = step_hook;
+    if (r == 0 && !check_only) setup_progress_hook("Updated", 100);
+    return r;
 }
