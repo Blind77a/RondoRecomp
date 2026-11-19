@@ -58,13 +58,13 @@ void th_panel(SDL_Renderer *ren, float x0, float y0, float x1, float y1, float c
 void th_brackets(SDL_Renderer *ren, float x0, float y0, float x1, float y1, float len, SDL_Color c, float thick);
 /* Horizontal lines every `step` pixels. */
 void th_scanlines(SDL_Renderer *ren, float x0, float y0, float x1, float y1, float step, SDL_Color c);
-/* A chevron pointing right (or left), `size` pixels tall, centred on (x, y). */
+/* A chevron pointing right (or left), `size` pixels tall, centered on (x, y). */
 void th_chevron(SDL_Renderer *ren, float x, float y, float size, bool right, SDL_Color c, float thick);
 /* A slanted plate (a parallelogram leaning `slant` pixels). */
 void th_plate(SDL_Renderer *ren, float x0, float y0, float x1, float y1, float slant, SDL_Color fill,
               SDL_Color border, float thick);
 
-/* A filled disc shaded top to bottom; a cross whose arms widen towards their ends, centred
+/* A filled disc shaded top to bottom; a cross whose arms widen toward their ends, centered
  * on its crossing (r: its size), with an optional edge line. */
 void th_disc(SDL_Renderer *ren, float cx, float cy, float r, SDL_Color top, SDL_Color bottom);
 void th_cross(SDL_Renderer *ren, float cx, float cy, float r, SDL_Color top, SDL_Color bottom, SDL_Color edge,

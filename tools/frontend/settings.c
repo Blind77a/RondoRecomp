@@ -20,6 +20,7 @@ void settings_default(Settings *s)
     s->volume = 10;
     s->slot = 1;
     s->start_screen = true;
+    s->run = true;
     s->language = LANG_EN;
     s->ra_enabled = true;
     s->check_updates = true;
@@ -77,6 +78,7 @@ void settings_load(Settings *s, const char *path)
         else if (!strcmp(key, "start_screen")) s->start_screen = n != 0;
         else if (!strcmp(key, "eight_way")) s->eight_way = n != 0;
         else if (!strcmp(key, "limp_whip")) s->limp_whip = n != 0;
+        else if (!strcmp(key, "run")) s->run = n != 0;
         else if (!strcmp(key, "disc_en")) snprintf(s->disc_en, sizeof s->disc_en, "%s", val);
         else if (!strcmp(key, "retroachievements")) s->ra_enabled = n != 0;
         else if (!strcmp(key, "ra_hardcore")) s->ra_hardcore = n != 0;
@@ -104,13 +106,13 @@ bool settings_save(const Settings *s, const char *path)
             "fullscreen = %d\nvsync = %d\nwidescreen_16_9 = %d\nwidescreen_edges = %d\nwidescreen_menus = %d\nwidescreen_title_art = %d\naspect = %d\nscaling = %d\nfilter = %d\n"
             "screen_effect = %d\neffect_strength = %d\nsides = %d\nsmooth_fades = %d\nsmooth_dithering = %d\n"
             "skip_cinematics = %d\nrewind = %d\nvolume = %d\nslot = %d\nstart_screen = %d\n"
-            "eight_way = %d\nlimp_whip = %d\n"
+            "eight_way = %d\nlimp_whip = %d\nrun = %d\n"
             "cheat_health = %d\ncheat_hearts = %d\ncheat_lives = %d\n"
             "maria_unlocked = %d\nplay_maria = %d\n"
             "language = %d\ndisc_ja = %s\ndisc_en = %s\n",
             s->fullscreen, s->vsync, s->widescreen, s->wide_edges, s->wide_menus, s->title_art, s->aspect, s->scaling, s->filter, s->effect, s->effect_strength, s->sides, s->smooth_fades, s->smooth_dither,
             s->skip, s->rewind, s->volume, s->slot, s->start_screen,
-            s->eight_way, s->limp_whip,
+            s->eight_way, s->limp_whip, s->run,
             s->cheat_health, s->cheat_hearts, s->cheat_lives,
             s->maria_unlocked, s->play_maria,
             s->language, s->disc_ja, s->disc_en);

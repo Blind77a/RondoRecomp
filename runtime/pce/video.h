@@ -98,7 +98,7 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line);
  *   both sides, VDC_CLIP_RIGHT the right side only, 0 neither. NULL for none; the array
  *   (PCE_FB_MAX_H bytes) must stay valid while frames are drawn.
  * - vdc_set_sprite_hide: sprites (a bit per sprite table entry) left out of the picture
- *   from now on; 0 = none. They still count towards each line's 16 and sprite 0's
+ *   from now on; 0 = none. They still count toward each line's 16 and sprite 0's
  *   collision, as if drawn: only their pixels are not put in the picture. */
 enum { VDC_CLIP_BOTH = 1, VDC_CLIP_RIGHT = 2 };
 const uint16_t *vdc_row_scroll(void);

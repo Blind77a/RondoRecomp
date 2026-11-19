@@ -1,5 +1,6 @@
-/* PC Engine sound: the HuC6280 PSG (6 wavetable channels, DDA, noise) and the CD-ROM
- * ADPCM voice playback (MSM5205-style 4-bit ADPCM from 64 KiB of ADPCM RAM).
+/* PC Engine sound: the HuC6280 PSG (6 wavetable channels, DDA, noise; tones band-limited,
+ * see sound.c) and the CD-ROM ADPCM voice playback (MSM5205-style 4-bit ADPCM from 64 KiB
+ * of ADPCM RAM).
  *
  * Rendering catches up to the master clock on every register write, so changes land on
  * the right output sample; finished samples wait in a ring buffer until the frontend asks

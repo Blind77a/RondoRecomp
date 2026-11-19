@@ -27,8 +27,8 @@
 #define OBJ_STATE 0x0EE0
 #define OBJ_TIMER 0x0F90      /* animation: frames to the next */
 #define OBJ_KIND 0x1828       /* 5: the player's whip or a dove */
-#define OBJ_BOX_X 0x1930      /* hitbox: centre ahead of X (mirrored facing left), half width, */
-#define OBJ_BOX_HW 0x1988     /* centre below Y, half height */
+#define OBJ_BOX_X 0x1930      /* hitbox: center ahead of X (mirrored facing left), half width, */
+#define OBJ_BOX_HW 0x1988     /* center below Y, half height */
 #define OBJ_BOX_Y 0x19E0
 #define OBJ_BOX_HH 0x1A38
 
@@ -315,7 +315,7 @@ static float limp_target(uint8_t aim, int facing)
     return f || u ? atan2f((float)u, (float)f) : -PI_F / 2;
 }
 
-/* The first link turns towards the d-pad, a step at a time; each link after it follows the
+/* The first link turns toward the d-pad, a step at a time; each link after it follows the
  * one before, a little late, so the whip curves as it swings. */
 static void limp_swing(Moves *m)
 {

@@ -133,7 +133,7 @@ typedef struct Look {
     float mask;       /* phosphor stripes: how far each dims the other two colours */
     float boost;      /* the picture added again, making up for the darkening */
     float glow;       /* halation */
-    float vignette;   /* darker towards the edges and corners */
+    float vignette;   /* darker toward the edges and corners */
     float curve;      /* how far the glass bulges */
     bool soft;        /* composite: blurred sideways */
 } Look;
@@ -227,7 +227,7 @@ static SDL_Texture *phosphors(Video *v, float depth)
     return v->mask;
 }
 
-/* Black, clear in the middle, darkening towards the edges and most into the corners. */
+/* Black, clear in the middle, darkening toward the edges and most into the corners. */
 static SDL_Texture *vignette(Video *v)
 {
     if (v->vignette) return v->vignette;

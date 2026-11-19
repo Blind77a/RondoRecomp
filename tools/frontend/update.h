@@ -60,5 +60,5 @@ UpdateState update_state(const UpdateInfo **info, const char **why);
 typedef enum { RUN_NONE, RUN_RUNNING, RUN_INSTALLED, RUN_LATEST, RUN_FAILED } UpdateRun;
 /* setup: rondo_setup next to the game. False if it cannot start (err says why). */
 bool update_run_start(const char *setup, char *err, size_t errlen);
-/* line: its latest message; *pct: the step's progress, -1 when it has none */
+/* line: its latest message; *pct: how far the whole update has got, -1 before Setup says */
 UpdateRun update_run_poll(char *line, size_t n, int *pct);

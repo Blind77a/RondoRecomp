@@ -440,6 +440,9 @@ static UpdateRun run_state;
 static char run_line[160], run_last[160], partial[512];
 static int run_pct = -1;
 
+/* Setup's lines: once it says how far it has got (the whole update's share, under the
+ * step's name), that is what is shown; its other lines only before then (and the last one
+ * for a failure). */
 static void run_segment(const char *seg)
 {
     char what[120];
@@ -451,8 +454,7 @@ static void run_segment(const char *seg)
     }
     while (*seg == ' ') seg++;
     if (!*seg) return;
-    run_pct = -1;
-    snprintf(run_line, sizeof run_line, "%s", seg);
+    if (run_pct < 0) snprintf(run_line, sizeof run_line, "%s", seg);
     snprintf(run_last, sizeof run_last, "%s", seg);
 }
 

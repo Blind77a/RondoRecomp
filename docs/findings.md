@@ -160,9 +160,9 @@ offsets, 88 slots each): `$0A10` in use, `$0A68` animation frame, `$0AC0` facing
 `$0B70` / `$0BC8` / `$0C20` (high, low, below the pixel) and Y `$0C78` / `$0CD0` / `$0D28`
 (picture coordinates: the sprite table's, and the picture's pixels), velocity `$0D80` /
 `$0DD8` and `$0E30` / `$0E88` (8.8), `$0EE0` state, `$0F90` animation timer, `$1828` kind
-(5: the whip or a dove), `$1250` can be hit, and the hitbox: `$1930` centre ahead of X
-(negated when facing left), `$19E0` centre below Y, `$1988` half width, `$1A38` half
-height. The collision code (`$6B:9413` puts the player's objects' box centres in `$2710` /
+(5: the whip or a dove), `$1250` can be hit, and the hitbox: `$1930` center ahead of X
+(negated when facing left), `$19E0` center below Y, `$1988` half width, `$1A38` half
+height. The collision code (`$6B:9413` puts the player's objects' box centers in `$2710` /
 `$2720`; `$6B:9466` checks each enemy against them) counts a hit when both distances are
 under the sums of the half sizes, and stores the enemy's slot in the weapon's `$1880`.
 
@@ -203,23 +203,70 @@ down once it drops more than 12 times in a second, which damage and sub-weapons 
 
 ## Camera, scrolling and objects
 
-Found for the widescreen option (0.6 to 0.12 up to 21:9; taken out in 0.13; back as 16:9 in
-`tools/frontend/wide.c`, see docs/runtime.md).
+Found for the widescreen option (an option from 0.6 to 0.12, taken out in 0.13; tried again
+upstream after 1.2 with a camera that stops at the walls and taken out before 1.3; back as
+16:9 in `tools/frontend/wide.c`, see docs/runtime.md).
 
-- Scroll layers at $1E00+ (8 layers): X sub/low/high $1E00/$1E08/$1E10, Y $1E18/$1E20/$1E28,
-  velocities $1E6E-$1E86, map page counters $1E8E/$1E96, per-frame copies at $1E39+ for the
-  raster split. Layer 0 is the playfield camera; the camera's limits are $1EBE (left page) and
-  $1EC6/$1EC7 (right X). The camera follows the player to keep it at screen X 128.
+- Scroll layers at $1E00+ (8 layers): X sub/low $1E00/$1E08, X page (mod 16) $1E96, Y
+  $1E18/$1E20/$1E28, velocities (8.8) $1E7E/$1E86 (added each frame by 6F:A6F4), map page
+  counters $1E8E. Layer 0 is the playfield camera; the camera's limits are $1EBE (left page)
+  and $1EC6/$1EC7 (right X). The camera follows the player to keep it at screen X 128 (the
+  player's code sets the camera's velocity). Parallax layers' velocities are worked out from
+  the camera's by each stage's own scroll code (6F:A0F8 table: halved, quartered, plus a drift
+  for clouds); Stage 1's sky band moves at 3/8 of the camera, a thin band below it at 1/2.
+- Late in each frame (line ~246, 69:4206...) the game copies every layer's X for the next
+  picture: low bytes $1E39-$1E40, high bytes $1E42-$1E49. Only the low 9 bits match the
+  layer reliably: in some rooms the copy is kept modulo 512 (Stage 5's start: camera $600,
+  copy 0; Stage 1's dead-trees room: camera $31D, copy $11B). The raster interrupts set each
+  band's X scroll from those copies (69:42FE), so a band of rows drawn with scroll S in frame
+  N+1 shows the layer whose copy made in frame N is S. While a room is set up the copies can
+  lag the layers (the room start steps a temporary camera across the level, with the display
+  off).
+- Room starts: 6F:A94C draws 13 columns from a temporary camera 384 px left (the map from 64
+  px left of the camera to 352 right); 6F:A9B1 (Stage 2' on the lake bridge, among others)
+  draws 16 from 320 px left: the whole 512-pixel map from the camera on. Some bands are drawn
+  only then and repeat every 512 px (the hedges under the bridge). These are the only callers
+  of the column routine (6F:A7A5) on the disc.
+- Velocities: a parallax layer's is set from the camera's every frame by the stage's scroll
+  code, so its share is exact: Stage 1's boss area has layers 1-3 at 1/2, 1/4, 1/8 of the
+  camera ($0140: $00A0, $0050, $0028) and 4-6 drifting at $0080, $0040, $0020 whatever the
+  camera does (clouds). A layer's art covers only what the game shows over the camera's range:
+  the far wall there ends 40 px past the right of the layer's rightmost view.
+- Rooms: zp `$83` is the room, its header (camera page and X, limits, ...) at the stage
+  block's table read by 6B:8954 (`$9C71` in Stage 1's first area, `$9EAD` in its boss area).
+  Leaving a room steps `$82` and takes `$83` from the route at `$9C20 + $82` (6B:866A); the
+  route is filled in as the stage goes (Stage 1: rooms 0, 1, 2 by the main road; 2 is the
+  dead-trees room). Stage 1 is two areas: $10 (rooms 0-8) and $0E (the wyvern's wall, one
+  room). The next area comes from `$81` (the stage's step): `$6A:7230 + $81` going on,
+  `$7241 + ($81 & $7F)` with bit 7 set.
+- Going through a door the next room starts at the end of the camera's scroll with the
+  picture on: its start (6F:A94C) steps the camera across the level for about 12 frames
+  ($040, $0A0, ... $270 in Stage 1's dead-trees room) before `$31` returns to 01.
 - The level is a grid of 256-pixel screens ($1D00 table, 16 x 16 pages); the background map
   is 512 x 512 (MWR $50). The scroll code streams 32-pixel columns 64 px past the edge it moves
-  towards, reading that distance from a small table also used for vertical streaming.
+  toward, reading that distance from a small table also used for vertical streaming.
 - Objects: 88 slots in parallel arrays at $2A10-$3A38 (+$2000 in CPU space); positions are in
   screen coordinates and are shifted by the camera every frame. Objects spawn from a per-room
   list sorted by world X when within 64 px of the screen, are removed beyond 128 px, and (for
   some) only move within 64 px. Slot $57 is the HUD. Some enemy generators sit fixed to the
   screen at X 320 (Stage 1's skeletons).
+- The object update (70:A000) runs over slots $10-$57 with a kind ($2750) and moves each by
+  the X and Y its scroll layer moved this frame (layer: $2F38 & $7F, usually 0, the camera),
+  unless its flags ($30F0) have bit 0 (fixed to the screen: generators). Slots $00-$0F are the
+  player's and its weapons'. What it leaves alone, kind 0 with a sprite, is fixed to the
+  screen: in every stage tried only the HUD ($57, type 5), the sub-weapon icon below it ($56,
+  type 3) and a stage's title letters ($54-$55, type 5).
 - The sprite builder writes up to 64 sprites straight to the VDC and drops any piece whose X is
   outside the 256-pixel screen.
+- Doors and room exits: objects ask the main loop for an event in zp `$38` (6B:8224 takes and
+  clears it). Event 3 (6B:8260) is leaving the room: `$31` (the play sub-state, 01 while
+  playing) becomes 03, `$84` the way out from `$8C` (a door's type 1-3, or bit 7 set: walking
+  off the room's edge). A door (kind $99, e.g. slot $4F past Stage 4's second bone serpent,
+  code 6B:99BB, state in `$27A8`) asks for it when Richter touches it (its `$33B0` 1-2, with
+  `$2743` bit 0 clear and `$3BD7` set). The door's first step (`$85` = 0, 6B:846F) waits until
+  no object in slots 1-$50 has a kind from $01 to $7F (the bone serpent finishing its death
+  takes about 100 frames); then the camera scrolls a screen on past the room's right limit,
+  the door opens, Richter walks through and the next room starts (`$31` back to 01).
 - The Stage 0 carriage chase does not scroll the camera; its scenery layers loop round the
   whole 512-pixel map, part of which is shared between layers. Its raster bands (rows of the
   picture, X scroll): sky 0-62 (+1 every few frames), far trees 63-78 (+1), trees 79-126
@@ -227,7 +274,11 @@ Found for the widescreen option (0.6 to 0.12 up to 21:9; taken out in 0.13; back
   (background) is parked in the band's map at scroll 256, just off both edges of the 256
   visible pixels, and its horses (sprite objects 3B, 4B-4E, 51-53 at screen X -224..-72,
   static) just off the left, while the trees (sprite objects, 16x64 pieces) go by; then the
-  band scrolls and the carriage drives in from the left.
+  band scrolls and the carriage drives in from the left. Its title shows with `$31` = 05
+  (frames 16817-17008 of the capture run). The rain is one object (kind $26, slot $4F) moving
+  24 px a frame and cycled around X 0-255, its drops (pattern $193) spread around it.
+- A boss's health gauge is an object fixed to the screen like the HUD: Stage 1's wyvern's is
+  slot $55 (kind 0, type 5) at X 216. Stage titles use $54-$55 too, sliding in from X -104.
 - The sprite builder (72:8000) keeps the object slot it is drawing in zp `$D9`; pieces with
   X + 32 negative are dropped at 72:8127, those with X + 32 below a size-dependent bound
   ($81A1,X) at 72:813A.

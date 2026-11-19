@@ -447,7 +447,7 @@ void th_disc(SDL_Renderer *ren, float cx, float cy, float r, SDL_Color top, SDL_
     th_poly(ren, p, 64, top, bottom, cy - r, cy + r);
 }
 
-/* A cross whose arms widen towards their ends, centred on its crossing at (cx, cy). */
+/* A cross whose arms widen toward their ends, centered on its crossing at (cx, cy). */
 void th_cross(SDL_Renderer *ren, float cx, float cy, float r, SDL_Color top, SDL_Color bottom, SDL_Color edge,
               float edge_w)
 {
@@ -595,7 +595,7 @@ static float flicker(float t, unsigned seed)
     return 0.8f + 0.12f * sinf(t * a + (float)seed) + 0.08f * sinf(t * b + 1.7f * (float)seed);
 }
 
-/* A soft round light (rx by ry): `inner` at the centre, fading to nothing at the rim, about
+/* A soft round light (rx by ry): `inner` at the center, fading to nothing at the rim, about
  * as light falls off. Added to what is there (`add`: light) or blended over it (haze). */
 static void glow(SDL_Renderer *ren, float cx, float cy, float rx, float ry, SDL_Color inner, bool add)
 {
