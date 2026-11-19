@@ -142,12 +142,12 @@ static int scr_mode(Pce *p)
 {
     uint8_t mode = p->cpu.a & 5, w = p->cpu.x, h = p->cpu.y;
     if (w < 10 || h < 10 || h > 30) { set_carry(p, true); return 100; }
-    /* horizontal: sync width 2, display start centred on the visible area */
+    /* horizontal: sync width 2, display start centered on the visible area */
     uint8_t hds = (uint8_t)(0x12 - (w >> 1));
     uint8_t hde = (uint8_t)(0x26 - hds - w);
     vdc_set(p, 0x0A, (uint16_t)(hds << 8 | 0x02));
     vdc_set(p, 0x0B, (uint16_t)(hde << 8 | (uint8_t)(w - 1)));
-    /* vertical: centre h*8 lines inside the 240-line area */
+    /* vertical: center h*8 lines inside the 240-line area */
     int lines = h * 8;
     int vds = 15 + (240 - lines) / 2;
     int vcr = PCE_LINES_PER_FRAME - 3 - (vds + 2) - lines;

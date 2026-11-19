@@ -77,10 +77,24 @@ Japanese disc draws its attract-mode story with it (12x12), the English translat
 
 ## Sound (`runtime/pce/sound.c`)
 
-- **PSG** (sound effects): 6 wavetable channels (32 x 5-bit samples), DDA mode, noise on
-  channels 4 and 5, 5-bit volume in 1.5 dB steps and 4-bit channel/global balance in 3 dB steps.
-  LFO: channel 1's waveform, clocked `lfo_freq` times slower, modulates channel 0's period
-  (x1, x16, x256) and is not heard itself.
+- **PSG** (sound effects, and the chip music: the pre-boss and boss rooms, the stage clear,
+  death, game over and all clear jingles): 6 wavetable channels (32 x 5-bit samples), DDA mode,
+  noise on channels 4 and 5, 5-bit volume in 1.5 dB steps and 4-bit channel/global balance in
+  3 dB steps. LFO: channel 1's waveform, clocked `lfo_freq` times slower, modulates channel 0's
+  period (x1, x16, x256) and is not heard itself (the game never turns it on).
+- **Band-limited tones.** A tone channel is a stepped wave, which the hardware's analog output
+  filters: only the note's harmonics are heard. Up to 1.2 each output sample took the step
+  under it at 44.1 kHz, which folded everything above 22 kHz back as tones that are not the
+  note's: 11-27 dB under the notes on the game's waveforms, which made the chip music sound
+  sour and out of tune (issue #8; its pitch, tempo and waveforms were right). Each output
+  sample is now the stepped wave through a windowed sinc (cutoff 20 kHz, Kaiser beta 8, 24
+  output samples: flat to 15 kHz, -1 dB at 18 kHz, -80 dB from 26 kHz), worked out from the
+  channel's phase and period alone, so the Sound struct and save states are unchanged. What is
+  left off the note's harmonics up to 16 kHz is 78-81 dB under them, the 16-bit output's own
+  floor (`sound_test` checks it is under -60 dB). Tones above 4.1 kHz (period under 27, sound
+  effects only) are averaged over their output sample instead, to bound the cost: about
+  0.1-0.15 ms a frame for six channels of music, 0.4 ms at most. The tone channels come out
+  0.27 ms late; noise and DDA are as before.
 - **ADPCM** (voices): OKI MSM5205-style 4-bit ADPCM from the 64 KiB ADPCM RAM at
   32 kHz / (16 - rate), **each byte's high nibble first**, as the hardware plays them (MAME's
   PC Engine CD does the same). Low nibble first (before 0.11.1) turned the voices into a slow
@@ -182,7 +196,9 @@ Video: aspect 4:3 / square pixels / stretch, fit or whole multiples, filters Sha
 upscale to a whole factor into a render target, then linear to the final size), Nearest and
 Smooth. On wide screens the sides show the picture blurred (downscaled to 16x14, scaled up
 linearly, dimmed). The window is high-DPI aware, so fullscreen renders at the display's
-native resolution (e.g. 3840x2160). Frames are paced at 59.83 Hz by the frame timer. VSync
+native resolution (e.g. 3840x2160). Frames are paced at 59.83 Hz by the frame timer
+(`rondo.log` counts frames that came over 1.5 frame times after the last, `frames late`,
+for telling the game's pacing from a recorder's). VSync
 (on by default; `set_vsync`, `SDL_SetRenderVSync` 1, adaptive if that is refused) shows each
 on the screen's refresh, so it never tears; the timer still sets the pace, so on a 60 Hz
 screen about one frame in 350 is shown twice. Test runs turn it off to run uncapped.
@@ -419,17 +435,17 @@ whip"):
 - The whip's direction is the d-pad's while it winds up (whip frames before 05), kept
   through the strike (05-07). For each frame of a turned strike the strike's three box
   entries in Richter's code (`$6E:DDE8`, picked by `$DD56`) are rewritten before the frame
-  and put back after it, so the game's own `$DD1F` gives the whip a box turned round
+  and put back after it, so the game's own `$DD1F` gives the whip a box turned around
   Richter's hand (cut down by a fifth on the diagonals), and no save state or rewind step
   keeps them. Crouching and stair whips stay ahead.
 - The strike's sprites (patterns `$1A0`-`$1AF` near Richter; palette 1, flashing through 3
   and 4) are left out of that frame's picture (`vdc_set_sprite_hide`, as `prompt.c` does)
-  and drawn into it turned round the hand, from their own pixels in VRAM (each picture pixel
+  and drawn into it turned around the hand, from their own pixels in VRAM (each picture pixel
   takes the source pixel it turns back to).
 - The limp whip holds Richter's and the whip's animation timers (`$0F90`) at 4 while
   Attack is held on the strike's last frame, as a state of standing or jumping attack; it
   is 8 links of 6 pixels (the last a 10-pixel tip) cut from the straight whip, the first
-  turning towards the d-pad by 0.22 rad a frame (hanging straight down with none) and each
+  turning toward the d-pad by 0.22 rad a frame (hanging straight down with none) and each
   next following the one before at 45% a frame. Its box (half 8 x 8) is on the tip.
   Letting go sets both timers to 1: the attack ends on the next frame, as it would have.
 - A dove of Maria's flying out (its state 0) gets, after each frame, what its velocity
@@ -462,7 +478,7 @@ into it.
 
 The look (`theme.c`; laid out after the Metroid: Other M port's menus, gothic, by candlelight
 and moonlight, red kept to small rubies): panels are dark umber frames with a pointed-arch
-top letting in pale moonlight, warmer towards the bottom, a gold border and inner line,
+top letting in pale moonlight, warmer toward the bottom, a gold border and inner line,
 pinnacles at the arch's feet and a cross on its apex; dividers carry diamonds and a cross;
 the selected row is a bar of candlelight with a gold cross for a cursor; notices are plaques
 with pointed ends. The emblem is a rose window of blue and indigo glass lit by a candle
@@ -471,8 +487,20 @@ left whose beams slant down onto the town, thin clouds and bats; a castle on a h
 town's rear rows in a cool mist; the town's warm glow; then the near row of houses (moonlit
 roof edges, chimneys), a church with a lit belfry and street lanterns, the windows lit by
 candles that flicker. Lights are added (`SDL_BLENDMODE_ADD`) as soft radial glows. The
-title is beside the menu panel. Each page has a help line per item and
-the buttons in the footer; panels are sized to their rows and open out when shown. All drawn
+title is beside the menu panel; on a screen narrower than 1.4:1 (4:3, 5:4: a cabinet's, or
+the default 960 x 720 window) it is stacked above it instead, the rose window left of the
+title, laid out on 640 x 740 units. The other pages' panel (600 units wide) is laid out on
+960 x 540 units at 16:10 and wider, and grows toward the screen's height below that, to
+680 x 540 at 4:3, so it fills a 4:3 screen as it fills a 16:9 one. Each page has a help
+line per item and the buttons in the footer; panels are sized to their rows and open out
+when shown.
+
+Windows fit the screen (`fit.h`, shared with Setup): the game's opens at 960 x 720, or
+smaller, keeping 4:3, when that and its frame would not fit on the display's usable area.
+Setup's window is 640 x 400 units, or 640 x 480 for a 4:3 screen (chosen by its "4:3
+screen" checkbox, kept in `setup.ini` next to it; `--4:3` / `--wide` for one run; else
+the screen's shape, under 1.4:1), up to twice that size, smaller to fit, and full screen
+when even its own size does not fit in a window. All drawn
 with SDL's renderer (`SDL_RenderGeometry`); text rasterised by stb_truetype (`stb_truetype.h`,
 public domain) into glyph atlases per size, in fonts built into rondo.exe (`ui_fonts.c`,
 generated by `tools/fonts/make_ui_fonts.py`; SIL OFL 1.1): Cinzel for menu text, Cinzel
@@ -487,8 +515,9 @@ START / F1 plays, Back does nothing there. The mouse works on every menu page
 
 Test modes: `rondo.exe --autotest` (save, load, rewind), `rondo.exe --autotest-features
 DIR` (plays the capture script with automatic skipping and all cheats, uncapped; writes
-screenshots of the video modes, menu pages and start screen to DIR; checks the start
-screen's keys and mouse layout; switches language at the end) and `rondo.exe
+screenshots of the video modes, menu pages and start screen to DIR, and of the start
+screen and menu in a 4:3 window; checks the start screen's keys and mouse layout, at 4:3
+too; switches language at the end) and `rondo.exe
 --autotest-start` (the start screen for 600 frames, checking the game waits behind it, a
 mouse click on Play sent through the event queue, the title screen reached; then Jump
 pressed during the intro skipping it, and Automatically from power-on, each by the game's
