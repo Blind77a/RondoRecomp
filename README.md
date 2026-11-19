@@ -23,10 +23,10 @@ options to the in-game menu's Video page (F1 / Back):
   background carried on seamlessly to the sides. Screens whose art doesn't repeat (the title
   screen, story scenes) stay 4:3.
 - **Title art** (on by default, with widescreen): your own art beside still screens such as
-  the title and the stage map. Put `title_sides.png`, `map_sides.png` and so on in your
-  profile folder: 396 x 225, the screen's picture in the middle and 70 columns of art each
-  side. The game recognises each screen by its middle and makes your sides fade and flash
-  with it. Your art stays on your PC and is never part of a release.
+  the title and the stage map, from files such as `title_sides.png` and `map_sides.png` in
+  your profile folder. The files hold only the sides, as the game's own colour numbers, plus
+  the screen's tile layout to recognise it by: none of the game's picture. Your sides appear
+  with the screen from its first frame and fade and flash with it, lightning included.
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
 - **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as

@@ -20,6 +20,15 @@ enum {
  * (raster palette changes, such as Richter's reflection in the water, stay exact). */
 static bool fade_on;
 static uint32_t fade_argb[512];
+const uint32_t *vce_shown_argb(const Vce *v) { return fade_on ? fade_argb : v->argb; }
+/* the colours each 16 lines of the last picture were drawn with (vdc_line_palette) */
+static uint32_t line_pal[(PCE_FB_MAX_H + 15) / 16][512];
+const uint32_t *vdc_line_palette(int row)
+{
+    if (row < 0) row = 0;
+    if (row >= PCE_FB_MAX_H) row = PCE_FB_MAX_H - 1;
+    return line_pal[row >> 4];
+}
 static unsigned fade_frame;
 static struct FadeEntry {
     uint16_t val;           /* the 9-bit value last seen at a picture's start */
@@ -489,6 +498,7 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line)
 
     uint32_t *dst = &d->fb[row * PCE_FB_MAX_W];
     const uint32_t *pal = fade_on ? fade_argb : vce->argb;
+    if ((row & 15) == 0) memcpy(line_pal[row >> 4], pal, sizeof line_pal[0]);   /* (vdc_line_palette) */
     for (int x = 0; x < w; x++) {
         uint16_t s = sp[x];
         if (s && ((s & 0x8000) || !bg[x])) dst[x] = pal[s & 0x1FF];

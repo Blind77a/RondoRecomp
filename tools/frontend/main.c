@@ -178,13 +178,14 @@ static void load_title_art(const char *dir)
         SDL_Surface *c = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888);
         SDL_DestroySurface(s);
         if (!c) continue;
-        if (c->w == TITLEART_W && c->h >= TITLEART_H - 1) {
-            TitleArt *t = &arts[n_arts++];
-            int h = c->h < TITLEART_H ? c->h : TITLEART_H;
-            for (int y = 0; y < h; y++) memcpy(t->px[y], (const uint8_t *)c->pixels + y * c->pitch, TITLEART_W * 4);
-            t->loaded = true;
+        static uint32_t px[TITLEART_W * TITLEART_FILE_H];
+        if (c->w == TITLEART_W && c->h >= TITLEART_FILE_H) {
+            for (int y = 0; y < TITLEART_FILE_H; y++)
+                memcpy(px + y * TITLEART_W, (const uint8_t *)c->pixels + y * c->pitch, TITLEART_W * 4);
+            if (titleart_parse(&arts[n_arts], px, TITLEART_W, TITLEART_FILE_H)) n_arts++;
+            else SDL_Log("%s is not title art made by the converter: not used", names[i]);
         } else {
-            SDL_Log("%s is %dx%d, not %dx%d: not used", names[i], c->w, c->h, TITLEART_W, TITLEART_H);
+            SDL_Log("%s is %dx%d, not %dx%d: not used", names[i], c->w, c->h, TITLEART_W, TITLEART_FILE_H);
         }
         SDL_DestroySurface(c);
     }
@@ -1333,7 +1334,7 @@ int main(int argc, char **argv)
             if (n_arts && set.title_art && !test_mode && ta_ext > 0 && pce.vdc.fb_w - 2 * have == 256 && !game_playing(&pce))
                 for (int k = 0; k < n_arts && !art; k++) {
                     int a = (art_last + k) % n_arts;
-                    if (titleart_compose(&arts[a], pce.vdc.fb + have, fb + have, pce.vdc.fb_h, PCE_FB_MAX_W, ta_ext, ta)) {
+                    if (titleart_compose(&arts[a], &pce, fb + have, pce.vdc.fb_h, PCE_FB_MAX_W, ta_ext, ta)) {
                         art = true;
                         art_last = a;
                     }
