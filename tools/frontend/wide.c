@@ -426,10 +426,15 @@ static void place_hud_object(Pce *p, int slot, uint8_t type, int home, int by)
  * letters ($54-$55, the one in $55 at X 88) are not the HUD's and stay centred. left / right:
  * how far the picture reaches past the original 256 pixels on each side. */
 #define BOSS_BAR_SLOT 0x55
-static void place_hud(Pce *p, int left, int right)
+static void place_hud_left(Pce *p, int left)
 {
     place_hud_object(p, HUD_SLOT, 0x05, 8, -left);
     place_hud_object(p, SUBWEAPON_SLOT, 0x03, 28, -left);
+}
+
+static void place_hud(Pce *p, int left, int right)
+{
+    place_hud_left(p, left);
     const uint8_t *r = p->wram;
     int bx = r[OBJ_XL + BOSS_BAR_SLOT] | r[OBJ_XH + BOSS_BAR_SLOT] << 8;
     bool bar = r[OBJ_TYPE + BOSS_BAR_SLOT] == 0x05 && r[OBJ_FRAME + BOSS_BAR_SLOT] && bx >= 216 && bx <= 254;
@@ -468,9 +473,30 @@ static const uint8_t ROOM_START_B[] = {0xA4, 0x45, 0xB9, 0x94, 0xA9, 0x82};   /*
 static bool recycled[256];
 static bool scenery_rows[64];   /* map rows seen scrolled apart from the playfield (this room) */
 
+static int edge_shift(int left, int right, int ext);
+
+/* The HUD's sprites are built during a frame (72:8000) and shown with the next one, whose
+ * picture is shifted (Level ends) for the camera as it stands once this frame has moved it:
+ * so the HUD is put again as the building starts, the camera moved by then (put before the
+ * frame it would be a step behind, jittering by a pixel as the camera steps 1 and 2 px). */
+static void hud_at_build(Wide *w, Pce *p)
+{
+    const uint8_t *r = p->wram;
+    int ext = p->vdc.wide;
+    if (!ext || game_state(p) != RONDO_PLAYING || !w->edges || !room_scrolls(r)) return;
+    int cam = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL];
+    int left = wrap(r[LIMIT_LEFT] * 256 - cam);
+    int right = wrap((r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1]) - cam) + 256;
+    place_hud_left(p, ext - edge_shift(left, right, ext));
+}
+
 static void on_entry(Pce *p, void *ctx)
 {
     uint16_t pc = p->cpu.pc;
+    if (pc == 0x8000 && p->cpu.mpr[4] == 0x72 && p->page[0x72]) {
+        hud_at_build(ctx, p);
+        return;
+    }
     if ((pc != 0xA94C && pc != 0xA9B1) || p->cpu.mpr[5] != 0x6F || !p->page[0x6F]) return;
     const uint8_t *code = p->page[0x6F] + (pc & 0x1FFF);
     if (memcmp(code, pc == 0xA94C ? ROOM_START_A : ROOM_START_B, 6)) return;
@@ -613,6 +639,18 @@ static void find_rows(const uint8_t *r)
         for (int a = 1; a < n; a++) row &= xs[a] - xs[a - 1] == 128;
         if (row) recycled[k] = true;
     }
+}
+
+/* Level ends: how far the picture moves over (positive: right) for a room whose walls are at
+ * screen X left and right (right: just past its last pixel), ext a side */
+static int edge_shift(int left, int right, int ext)
+{
+    int bl = left + ext > 0 ? left + ext : 0;              /* black at the left */
+    int br = 256 + ext - right > 0 ? 256 + ext - right : 0; /* ... at the right */
+    int shift = bl && br ? (bl - br) / 2 : bl - br;
+    if (shift > ext) shift = ext;
+    if (shift < -ext) shift = -ext;
+    return shift;
 }
 
 /* ---- scenery ------------------------------------------------------------------------ */
@@ -770,6 +808,15 @@ void wide_frame(Wide *w, Pce *p)
         w->menu_good = w->menu_bad = 0;
     }
     vdc_set_side_tiles(menu ? side_l : NULL, menu ? side_r : NULL);
+    /* a menu sliding over to another page (its scroll moved in the last few frames): the
+     * pages themselves across the whole picture (vdc_set_side_real) */
+    {
+        int bxr = vdc_row_scroll()[0];
+        if (bxr != w->menu_bxr) w->menu_moved = 0;
+        else if (w->menu_moved < 255) w->menu_moved++;
+        w->menu_bxr = bxr;
+    }
+    vdc_set_side_real(menu && w->menu_moved < 4);
     if (!show && !menu) ext = 0;
 
     /* In a scene drawn wide over its looping scenery, a band of rows that stands still with
@@ -847,13 +894,7 @@ void wide_frame(Wide *w, Pce *p)
      * shows; it stays put there until the camera has come that far from the end. (A room
      * narrower than the picture is centred between its walls.) */
     int shift = 0;
-    if (ext && scrolls && w->edges) {
-        int bl = left + ext > 0 ? left + ext : 0;              /* black at the left */
-        int br = 256 + ext - right > 0 ? 256 + ext - right : 0; /* ... at the right */
-        shift = bl && br ? (bl - br) / 2 : bl - br;
-        if (shift > ext) shift = ext;
-        if (shift < -ext) shift = -ext;
-    }
+    if (ext && scrolls && w->edges) shift = edge_shift(left, right, ext);
     vdc_set_wide_shift(shift);
     w->shift = shift;
 
@@ -925,6 +966,7 @@ void wide_frame(Wide *w, Pce *p)
         p->vdc.wide_x0 = 0;
         p->vdc.wide_x1 = 256 + 2 * ext;
     }
+    /* (the HUD is put again as its sprites are built: hud_at_build) */
     if (s == RONDO_PLAYING) place_hud(p, ext - shift, ext + shift);
     else vdc_set_sprite_move(0, -1, 0);
     w->active = ext;
@@ -937,6 +979,7 @@ void wide_off(Wide *w, Pce *p)
     w->gen_r = w->gen_l = 0;
     vdc_set_wide_shift(0);
     vdc_set_side_tiles(NULL, NULL);
+    vdc_set_side_real(false);
     vdc_set_map_fill(NULL);
     vdc_set_sprite_move(0, -1, 0);
     w->shift = 0;
