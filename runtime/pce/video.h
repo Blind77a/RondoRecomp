@@ -101,6 +101,9 @@ const uint8_t *vdc_row_bg_blank(void);
 const uint8_t *vdc_row_bg_edge(void);
 void vdc_set_row_clip(const uint8_t *rows);
 void vdc_set_sprite_hide(uint64_t mask);
+/* - vdc_set_sprite_move: sprites whose pattern is pattern_lo..pattern_hi drawn dx px further
+ *   right (widescreen: a boss's health bar at the picture's right edge); hi < lo for none. */
+void vdc_set_sprite_move(int pattern_lo, int pattern_hi, int dx);
 /* Widescreen's shift (host-side, like the above): the widened picture is drawn this many
  * pixels further right (negative: left) of the game's screen, at most fb_wide either way,
  * so at a level's edge all the extra width goes to the side the level goes on. The
@@ -120,3 +123,9 @@ int vdc_fb_shift(void);
 #define VDC_SIDE_NONE 0xFFFF
 void vdc_set_side_tiles(const uint16_t *left, const uint16_t *right);
 const uint16_t *vdc_row_map_y(void);
+/* Map fill (host-side, like the above): background map entries drawn instead of the map's
+ * own beside the original 256 pixels, by map position: fill[row * VDC_FILL_W + column]
+ * (64 rows), VDC_SIDE_NONE for the map's own. For scenery the game drew only as far as its
+ * 4:3 picture ever shows, carried on in its own tiles (wide.c). NULL for none. */
+#define VDC_FILL_W 128
+void vdc_set_map_fill(const uint16_t *fill);

@@ -14,6 +14,7 @@
 #include "../frontend/moves.h"
 #include "../frontend/prompt.h"
 #include "../frontend/wide.h"
+#include "../frontend/titleart.h"
 #include "../frontend/dedither.h"
 #include "recomp/recomp.h"
 #include "../recomp/capture_script.h"
@@ -213,6 +214,7 @@ int main(int argc, char **argv)
     int wide = 0;   /* --wide N: widescreen extension in pixels per side (42 = 16:9 at 4:3, 70 square) */
     bool wide_edges = false;   /* --wide-edges: Video > Level ends */
     bool wide_menus = false;   /* --wide-menus: Video > Wide menus */
+    static TitleArt title_art;   /* --title-art FILE: 396 x 225 ARGB, raw (titleart.h): shots of the title with it */
     int last_shift = 0;
     long wrep_at[8]; /* --wide-report FRAME: which widescreen game changes are in */
     int n_wrep = 0;
@@ -295,6 +297,14 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--wide") && i + 1 < argc) wide = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--wide-edges")) wide_edges = true;   /* Video > Level ends */
         else if (!strcmp(argv[i], "--wide-menus")) wide_menus = true;   /* Video > Wide menus */
+        else if (!strcmp(argv[i], "--title-art") && i + 1 < argc) {
+            FILE *tf = fopen(argv[++i], "rb");
+            if (tf) {
+                title_art.loaded = fread(title_art.px, sizeof title_art.px, 1, tf) == 1;
+                fclose(tf);
+            }
+            if (!title_art.loaded) fprintf(stderr, "cannot read %s (396 x 225 ARGB, raw)\n", argv[i]);
+        }
         else if (!strcmp(argv[i], "--smooth-fades")) vce_set_smooth_fades(true);
         else if (!strcmp(argv[i], "--dedither")) dedither_shots = true;
         else if (!strcmp(argv[i], "--wide-skip") && i + 1 < argc) {   /* leave patches out: list of indexes */
@@ -531,7 +541,19 @@ int main(int argc, char **argv)
             snprintf(path, sizeof path, "%s/frame_%05ld.png", out, f + 1);
             static uint32_t dd[PCE_FB_MAX_W * PCE_FB_MAX_H];
             if (dedither_shots) dedither(pce.vdc.fb, dd, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
-            if (!png_write_argb(path, dedither_shots ? dd : pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W))
+            const uint32_t *shot = dedither_shots ? dd : pce.vdc.fb;
+            int shot_w = pce.vdc.fb_w;
+            static uint32_t ta[PCE_FB_MAX_W * PCE_FB_MAX_H];
+            int fw = pce.vdc.fb_wide;
+            if (title_art.loaded && pce.vdc.fb_w - 2 * fw == 256 &&
+                titleart_compose(&title_art, pce.vdc.fb + fw, shot + fw, pce.vdc.fb_h, PCE_FB_MAX_W, TITLEART_SIDE, ta)) {
+                static bool said;
+                if (!said) printf("title art first shown at frame %ld\n", f + 1);
+                said = true;
+                shot = ta;
+                shot_w = 256 + 2 * TITLEART_SIDE;
+            }
+            if (!png_write_argb(path, shot, shot_w, pce.vdc.fb_h, PCE_FB_MAX_W))
                 fprintf(stderr, "cannot write %s (does the directory exist?)\n", path);
             HuC6280 *c = &pce.cpu;
             printf("frame %5ld  PC=%02X:%04X  CR=%04X MWR=%04X SATB=%04X  %dx%d  irq_m=%02X  vec1=%02X%02X  io?=%u\n",

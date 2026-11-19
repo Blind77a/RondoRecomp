@@ -22,6 +22,8 @@ typedef struct Settings {
     bool wide_edges;       /* widescreen at a level's end: the picture moves over instead of
                             * showing black past its wall (wide.h; on by default) */
     bool wide_menus;       /* widescreen on the title and file menus too (wide.h; on by default) */
+    bool title_art;        /* with widescreen, the player's title_sides.png beside the title
+                            * screen (titleart.h; on by default, used only if the file is there) */
     int aspect;            /* ASPECT_* */
     int scaling;           /* SCALE_*: fit the screen, or whole multiples only */
     int filter;            /* FILTER_* */

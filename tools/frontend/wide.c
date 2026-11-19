@@ -268,6 +268,8 @@ static const Patch patches[] = {
 #define DRAW_PATCHES (((1u << N_PATCHES) - 1) & ~WORLD_PATCHES & ~OBJECT_PATCHES)   /* the rest */
 /* objects reach further out only for a picture wider than the 64 px they already reach */
 #define OBJECT_REACH 64
+/* enemies sent in from just past the screen's edges start at most this far out (wide_frame) */
+#define EDGE_SPAWN_MAX 80
 
 static uint8_t *at(Pce *p, const Patch *q) { return p->page[q->bank] ? p->page[q->bank] + q->off : NULL; }
 static const uint8_t *orig_of(const Patch *q) { return q->orig[0] ? q->orig : RTS_FILLER; }
@@ -401,27 +403,37 @@ static void move_generators(Wide *w, Pce *p, int right, int left)
     w->gen_l = left;
 }
 
-/* Move one HUD object to its place at the left edge: its original screen X - extension.
- * Only if it is the HUD's (its type) and where the game or we put it. */
-static void place_hud_object(Pce *p, int slot, uint8_t type, int home, int ext, int *moved_to)
+/* Move one HUD object `by` px from its original screen X (home): only if it is the HUD's
+ * (its type) and anywhere from home out to as far as widescreen ever puts it on that side
+ * (where the game puts it, or this or an earlier session did: a save state holds it). */
+static void place_hud_object(Pce *p, int slot, uint8_t type, int home, int by)
 {
     uint8_t *r = p->wram;
     if (r[OBJ_TYPE + slot] != type) return;
     int x = (int16_t)(r[OBJ_XL + slot] | r[OBJ_XH + slot] << 8);
-    if (x != home && x != *moved_to) return;
-    int to = home - ext;
+    int reach = 2 * WIDE_MAX;
+    if (by <= 0 ? (x > home || x < home - reach) : (x < home || x > home + reach)) return;
+    int to = home + by;
     r[OBJ_XL + slot] = (uint8_t)to;
     r[OBJ_XH + slot] = (uint8_t)(to >> 8);
-    *moved_to = to;
 }
 
-/* Keep the HUD at the left edge of the picture: the frame (health, hearts, score) and the
- * sub-weapon icon that hangs from it, both set up by each stage as it starts (the stage's
- * title letters, slots $54-$55, are not the HUD's and stay centred). */
-static void place_hud(Wide *w, Pce *p, int ext)
+/* Keep the HUD at the edges of the picture: at the left the frame (health, hearts, score)
+ * and the sub-weapon icon that hangs from it, both set up by each stage as it starts; at the
+ * right a boss's health bar (slot $55, type 5, settled at X 216 after sliding in). The bar
+ * cannot be moved as an object (past X 253 its own code slides it in again), so its sprites
+ * (patterns $1F8-$1FF, the bar's own) are drawn further right instead. The stage's title
+ * letters ($54-$55, the one in $55 at X 88) are not the HUD's and stay centred. left / right:
+ * how far the picture reaches past the original 256 pixels on each side. */
+#define BOSS_BAR_SLOT 0x55
+static void place_hud(Pce *p, int left, int right)
 {
-    place_hud_object(p, HUD_SLOT, 0x05, 8, ext, &w->hud_x);
-    place_hud_object(p, SUBWEAPON_SLOT, 0x03, 28, ext, &w->subweapon_x);
+    place_hud_object(p, HUD_SLOT, 0x05, 8, -left);
+    place_hud_object(p, SUBWEAPON_SLOT, 0x03, 28, -left);
+    const uint8_t *r = p->wram;
+    int bx = r[OBJ_XL + BOSS_BAR_SLOT] | r[OBJ_XH + BOSS_BAR_SLOT] << 8;
+    bool bar = r[OBJ_TYPE + BOSS_BAR_SLOT] == 0x05 && r[OBJ_FRAME + BOSS_BAR_SLOT] && bx >= 216 && bx <= 254;
+    vdc_set_sprite_move(0x1F8, bar ? 0x1FF : 0, right);
 }
 
 /* ---- the room ----------------------------------------------------------------------- */
@@ -450,6 +462,12 @@ static const uint8_t ROOM_START_B[] = {0xA4, 0x45, 0xB9, 0x94, 0xA9, 0x82};   /*
  * changes in for rooms the camera scrolls sideways through, and take them out for every
  * other room, whose background map may be shared out between layers in ways the wider
  * drawing would overwrite (the Stage 0 carriage chase is one). */
+/* kinds of object moved round from one side of the screen to the other (wide_frame): seen
+ * jumping, or three or more of a kind standing exactly 128 px apart (the bridge pillars, so
+ * their first time round is covered too). Forgotten as a room starts. */
+static bool recycled[256];
+static bool scenery_rows[64];   /* map rows seen scrolled apart from the playfield (this room) */
+
 static void on_entry(Pce *p, void *ctx)
 {
     uint16_t pc = p->cpu.pc;
@@ -472,6 +490,8 @@ static void on_entry(Pce *p, void *ctx)
         else if (to_right < w->want) start = 0x00;
     }
     var_value[VAR_ROOM_START] = start;
+    memset(recycled, 0, sizeof recycled);
+    memset(scenery_rows, 0, sizeof scenery_rows);
     set_patches(p, WORLD_PATCHES, w->want > 0 && scrolls);
     set_patches(p, OBJECT_PATCHES, (w->want > OBJECT_REACH || (w->edges && w->want > 0)) && scrolls);
     update_vars(p);
@@ -505,11 +525,12 @@ static void pair_add(uint16_t a, uint16_t b)
     if (pair_n[i] < 0xFFFF) pair_n[i]++;
 }
 
-/* the tile seen most often after a (before it: before = true), at least twice; or none */
-static uint16_t pair_next(uint16_t a, bool before)
+/* the tile seen most often after a (before it: before = true), at least twice (at least
+ * once: once = true); or none */
+static uint16_t pair_next_n(uint16_t a, bool before, bool once)
 {
     uint16_t best = VDC_SIDE_NONE;
-    int n = 1;
+    int n = once ? 0 : 1;
     for (int u = 0; u < n_used; u++) {
         int i = pair_used[u];
         uint16_t x = (uint16_t)(pair_key[i] >> 16), y = (uint16_t)pair_key[i];
@@ -520,6 +541,7 @@ static uint16_t pair_next(uint16_t a, bool before)
     }
     return best;
 }
+static uint16_t pair_next(uint16_t a, bool before) { return pair_next_n(a, before, false); }
 
 /* Works out the side tiles for the last frame's picture (ext a side); true when nearly all
  * of them could be, and then they are the ones drawn. */
@@ -564,6 +586,119 @@ static bool menu_sides(Pce *p, int ext)
     memcpy(side_l, try_l, sizeof side_l);
     memcpy(side_r, try_r, sizeof side_r);
     return true;
+}
+
+
+/* a row: every object of a kind (not fixed to the screen), three or four of them, standing
+ * exactly 128 px apart (the bridge pillars; not, say, a splash's many particles, three of
+ * which can happen to be 128 px apart) */
+static void find_rows(const uint8_t *r)
+{
+    for (int i = 0; i < OBJ_SLOTS; i++) {
+        uint8_t k = r[OBJ_KIND + i];
+        if (!k || recycled[k] || (r[OBJ_FLAGS + i] & 1)) continue;
+        int xs[5], n = 0;
+        bool fixed = false;
+        for (int j = 0; j < OBJ_SLOTS && n <= 4; j++) {
+            if (r[OBJ_KIND + j] != k) continue;
+            fixed |= (r[OBJ_FLAGS + j] & 1) != 0;
+            xs[n++] = (int16_t)(r[OBJ_XL + j] | r[OBJ_XH + j] << 8);
+        }
+        if (fixed || n < 3 || n > 4) continue;
+        for (int a = 1; a < n; a++)   /* (sorted) */
+            for (int b = a; b > 0 && xs[b] < xs[b - 1]; b--) {
+                int t = xs[b]; xs[b] = xs[b - 1]; xs[b - 1] = t;
+            }
+        bool row = true;
+        for (int a = 1; a < n; a++) row &= xs[a] - xs[a - 1] == 128;
+        if (row) recycled[k] = true;
+    }
+}
+
+/* ---- scenery ------------------------------------------------------------------------ */
+
+/* Scenery bands (rows scrolled apart from the playfield: Stage 2's distant hills, castle and
+ * trees under the bridge) are sometimes drawn only as far across their map as the 4:3
+ * picture ever shows of them; the rest of the map is blank tiles, which the wider picture
+ * would show as bare sky. Each such map row's longest blank stretch is filled from both
+ * ends with the tile most often after (before) the one at its end, seen at least twice in
+ * the band, meeting in the middle: fixed to the map, so it scrolls with the band, and drawn
+ * only beside the original 256 pixels (vdc_set_map_fill). Shorter gaps, the playfield's
+ * rows and rows any playfield line shows are left as they are. */
+#define SCENERY_MIN_GAP 12   /* tiles: the shortest blank stretch filled (96 px) */
+static uint16_t scenery[64 * VDC_FILL_W];
+
+static bool tile_blank(const Vdc *d, uint16_t e)
+{
+    const uint16_t *t = &d->vram[((e & 0x7FF) * 16) & 0x7FFF];
+    for (int i = 0; i < 16; i++)
+        if (t[i]) return false;
+    return true;
+}
+
+static bool scenery_fill(Pce *p, int cam)
+{
+    static const int map_w[4] = {32, 64, 128, 128};
+    const Vdc *d = &p->vdc;
+    int mw = map_w[(d->reg[9] >> 4) & 3], mh = (d->reg[9] & 0x40) ? 64 : 32;
+    if (mw < 64) return false;
+    int rows = d->fb_h < PCE_FB_MAX_H ? d->fb_h : PCE_FB_MAX_H;
+    const uint16_t *rs = vdc_row_scroll(), *my = vdc_row_map_y();
+    /* a map row is scenery once it has been seen scrolled apart from the playfield in this
+     * room (at a room's end every layer can stand at the same scroll for a moment); one a
+     * playfield line shows in the same frame is not */
+    uint8_t band[64] = {0};   /* 1 scenery, 2 shown by a playfield line */
+    bool pf_line[64] = {false}, apart[64] = {false};
+    for (int y = 0; y < rows; y++) {
+        int r = (my[y] & (mh * 8 - 1)) >> 3;
+        if ((rs[y] & 0x1FF) == (cam & 0x1FF)) pf_line[r] = true;
+        else apart[r] = true;
+    }
+    for (int r = 0; r < 64; r++) {
+        if (apart[r]) scenery_rows[r] = true;
+        band[r] = !scenery_rows[r] ? 0 : (apart[r] && pf_line[r]) ? 2 : 1;
+    }
+#define TILE(r, c) d->vram[(r) * mw + ((c) & (mw - 1))]
+    for (int u = 0; u < n_used; u++) pair_n[pair_used[u]] = 0;
+    n_used = 0;
+    static bool blank[64][VDC_FILL_W];
+    bool any_band = false;
+    for (int r = 0; r < mh; r++) {
+        if (band[r] != 1) continue;
+        any_band = true;
+        for (int c = 0; c < mw; c++) blank[r][c] = tile_blank(d, TILE(r, c));
+        for (int c = 0; c < mw; c++)
+            if (!blank[r][c] && !blank[r][(c + 1) & (mw - 1)]) pair_add(TILE(r, c), TILE(r, c + 1));
+    }
+    if (!any_band) return false;
+    for (int i = 0; i < 64 * VDC_FILL_W; i++) scenery[i] = VDC_SIDE_NONE;
+    bool any = false;
+    for (int r = 0; r < mh; r++) {
+        if (band[r] != 1) continue;
+        /* the longest blank stretch, going round the map */
+        int best_s = 0, best_l = 0;
+        for (int c = 0; c < mw; c++) {
+            if (!blank[r][c] || blank[r][(c - 1) & (mw - 1)]) continue;
+            int l = 0;
+            while (l < mw && blank[r][(c + l) & (mw - 1)]) l++;
+            if (l > best_l) { best_l = l; best_s = c; }
+        }
+        /* (a stretch the art leaves out is long; gaps between clouds and hills are short) */
+        if (best_l < SCENERY_MIN_GAP || best_l >= mw) continue;
+        int half = (best_l + 1) / 2;
+        uint16_t e = TILE(r, best_s - 1);
+        for (int k = 0; k < half && (e = pair_next_n(e, false, true)) != VDC_SIDE_NONE; k++) {
+            scenery[r * VDC_FILL_W + ((best_s + k) & (mw - 1))] = e;
+            any = true;
+        }
+        e = TILE(r, best_s + best_l);
+        for (int k = 0; k < best_l - half && (e = pair_next_n(e, true, true)) != VDC_SIDE_NONE; k++) {
+            scenery[r * VDC_FILL_W + ((best_s + best_l - 1 - k) & (mw - 1))] = e;
+            any = true;
+        }
+    }
+#undef TILE
+    return any;
 }
 
 void wide_frame(Wide *w, Pce *p)
@@ -686,16 +821,25 @@ void wide_frame(Wide *w, Pce *p)
      * their drops about 128 px either side). A banner or a generator does not move. */
     uint8_t *table = p->page[0x00] ? p->page[0x00] + PARKED_TABLE : NULL;
     uint8_t *echo = p->page[0x00] ? p->page[0x00] + ECHO_TABLE : NULL;
+    if (ext && s == RONDO_PLAYING) find_rows(r);
     for (int i = 0; i < OBJ_SLOTS; i++) {
         int16_t x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8);
         w->obj_still[i] = x == w->obj_x[i] ? (uint8_t)(w->obj_still[i] < 255 ? w->obj_still[i] + 1 : 255) : 0;
+        /* scenery the game keeps as a few objects it moves round from one side of its screen
+         * to the other (Stage 2's bridge pillars: three, 128 px apart, kind $44, jumping 384):
+         * noticed by such a jump, and drawn 256 px either side too (the echoes below), which
+         * puts the copies where the next ones round would be */
+        int jump = x - w->obj_x[i];
+        if (r[OBJ_KIND + i] && r[OBJ_KIND + i] == w->obj_kind[i] && ((jump >= 376 && jump <= 392) || (jump <= -376 && jump >= -392)))
+            recycled[r[OBJ_KIND + i]] = true;
         w->obj_x[i] = x;
         bool hud = i == HUD_SLOT || i == SUBWEAPON_SLOT;
         bool parked = any_parked && !hud && r[OBJ_FRAME + i] && x < 0 && w->obj_still[i] >= PARKED_FRAMES;
         if (table) table[i] = parked;
         bool weather = ext && !hud && r[OBJ_KIND + i] && (r[OBJ_FLAGS + i] & 1) && x >= 0 && x < 256 &&
                        w->obj_still[i] < ECHO_STILL_FRAMES;
-        if (echo) echo[i] = weather;
+        bool round = ext && !hud && r[OBJ_KIND + i] && !(r[OBJ_FLAGS + i] & 1) && recycled[r[OBJ_KIND + i]];
+        if (echo) echo[i] = weather || round;
     }
 
     /* Level edges (w->edges): within the extension of a room's end the picture moves over,
@@ -712,6 +856,38 @@ void wide_frame(Wide *w, Pce *p)
     }
     vdc_set_wide_shift(shift);
     w->shift = shift;
+
+    /* Enemies some rooms send in from just past the screen's edges, whatever the camera
+     * does (the castle hall's ghouls at X -24 / 280, its kind-31 creatures at 272): put at
+     * those places they would appear inside the wider picture, so on the frame one first
+     * shows it moves out by the picture's extra width on that side, keeping its distance
+     * from the edge, but no more than EDGE_SPAWN_MAX past the screen's edge (the creatures
+     * remove themselves further out: kind 31 from 86 px). Only at those exact places (16, 24
+     * or 32 px past the edge; things thrown from off screen come out where the thrower is),
+     * and not objects fixed to the screen. */
+    for (int i = 0; i < OBJ_SLOTS; i++) {
+        uint8_t kind = r[OBJ_KIND + i];
+        bool first = kind && r[OBJ_FRAME + i] && !(kind == w->obj_kind[i] && w->obj_shown[i]);
+        w->obj_kind[i] = kind;
+        w->obj_shown[i] = kind && r[OBJ_FRAME + i];
+        if (!first || !ext || s != RONDO_PLAYING || !scrolls || (r[OBJ_FLAGS + i] & 1) ||
+            i == HUD_SLOT || i == SUBWEAPON_SLOT)
+            continue;
+        int x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8), to = x;
+        if (x == -16 || x == -24 || x == -32) {
+            int d = -x + ext - shift;
+            to = -(d < EDGE_SPAWN_MAX ? d : EDGE_SPAWN_MAX);
+            if (to > x) to = x;
+        } else if (x == 256 + 16 || x == 256 + 24 || x == 256 + 32) {
+            int d = x - 256 + ext + shift;
+            to = 256 + (d < EDGE_SPAWN_MAX ? d : EDGE_SPAWN_MAX);
+            if (to < x) to = x;
+        }
+        if (to != x) {
+            r[OBJ_XL + i] = (uint8_t)to;
+            r[OBJ_XH + i] = (uint8_t)(to >> 8);
+        }
+    }
 
     /* sprites are built out to the picture's edges; objects spawn and start moving past the
      * side the picture reaches further on (no further than 120 px: the game removes them
@@ -734,6 +910,10 @@ void wide_frame(Wide *w, Pce *p)
         }
     }
 
+    /* scenery bands carried on beside the picture (scenery_fill) */
+    bool filled = ext && show && scrolls && s == RONDO_PLAYING && scenery_fill(p, cam);
+    vdc_set_map_fill(filled ? scenery : NULL);
+
     p->vdc.wide = ext;
     if (menu) {
         p->vdc.wide_x0 = 0;
@@ -745,7 +925,8 @@ void wide_frame(Wide *w, Pce *p)
         p->vdc.wide_x0 = 0;
         p->vdc.wide_x1 = 256 + 2 * ext;
     }
-    if (s == RONDO_PLAYING) place_hud(w, p, ext - shift);
+    if (s == RONDO_PLAYING) place_hud(p, ext - shift, ext + shift);
+    else vdc_set_sprite_move(0, -1, 0);
     w->active = ext;
 }
 
@@ -756,9 +937,11 @@ void wide_off(Wide *w, Pce *p)
     w->gen_r = w->gen_l = 0;
     vdc_set_wide_shift(0);
     vdc_set_side_tiles(NULL, NULL);
+    vdc_set_map_fill(NULL);
+    vdc_set_sprite_move(0, -1, 0);
     w->shift = 0;
     w->menu_good = 0;
-    place_hud(w, p, 0);
+    place_hud(p, 0, 0);
     w->patched = false;
     w->active = 0;
     p->vdc.wide = 0;
