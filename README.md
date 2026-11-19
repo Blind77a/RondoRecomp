@@ -11,7 +11,7 @@ This fork of [gminustwo/RondoRecomp](https://github.com/gminustwo/RondoRecomp) a
 options to the in-game menu's Video page (F1 / Back):
 
 - **Widescreen 16:9** (off by default): shows more of the level on each side, 42 game pixels
-  a side with the TV's 4:3 pixels and 70 with square pixels. Background, enemies, items and
+  a side with the TV's 4:3 pixels and 64 with square pixels (stretched the last 4% or so to fill 16:9). Background, enemies, items and
   Stage 2's rain fill the wider picture, and the score display moves to the left edge. Rooms
   the camera doesn't scroll through sideways (shafts, boss rooms) stay 4:3. Off in
   RetroAchievements hardcore mode.

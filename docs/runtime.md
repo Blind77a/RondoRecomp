@@ -233,9 +233,11 @@ draws `vdc.wide` extra columns each side of a 256-pixel picture from the backgro
 sprite table (`fb_wide` latched per frame; the original 256 start at `fb[fb_wide]`; the 16
 sprites a line limit is lifted in a widened picture; columns beyond the room's walls, or
 clipped rows, are black behind the sprites). The extension fills the window's shape
-(`wide_extent`: 42 a side for 16:9 at 4:3 TV pixels, 70 with square pixels; rounded down
+(`wide_extent`: 42 a side for 16:9 at 4:3 TV pixels, 70 with square pixels but at most 64
+(`WIDE_STREAMED`: the background is drawn (STREAM / 32) * 32 = 64 px past the 256 at all
+times; at 70 its last 6 px showed what the map held before, every 32 px walked); rounded down
 to even) up to `WIDE_MAX` = 72. The few pixels rounding leaves short of the window's shape
-are taken up by widening the picture to fill it (`video.c`, `place`, under 3%, Fit screen
+are taken up by widening the picture to fill it (`video.c`, `place`, under 5%, Fit screen
 only). The game itself already prepares 64 px past each side: objects spawn and start
 moving 64 px out, so at 42 they are left exactly as the game has them and play is
 unchanged. Past 64 (square pixels) objects spawn and start moving 72 px out instead
@@ -254,10 +256,13 @@ disc as it goes):
   old distance the distance table holds the old value; a frame that ends right then (the
   game running long) still counts the change as in (`patches_in`; before, such a frame was
   shown 4:3, a bar flicking in and out every few seconds).
-- Objects, only for an extension past 64 (`OBJECT_REACH`; put in or out with the
-  background): spawning at camera + $148 / - $48 (69:1E68 / 1E7F) and starting to move from
-  -72 / 328 (70:A0B0 / A0BD); screen-fixed generators at 320 / -64 moved to 328 / -72 while
-  they are in (`move_generators`, only on a change). Removal stays at 128 px.
+- Objects (put in or out with the background, in every widened scrolling room): spawning
+  (69:1E68 / 1E7F) and starting to move (70:A0B0 / A0BD) at `object_reach` past the 4:3
+  screen, the extension + 50 px (`OBJECT_MARGIN`: wide sprites drawn around their X, such as
+  the broken bridge's sections, appeared inside the picture's edges at 72), at most 120:
+  92 at 42 px a side, 120 at 70. Screen-fixed generators follow (`move_generators`). Removal
+  stays at 128 px. A save state made in a widened room holds the changes with their bytes
+  moved: taken as in, so they follow the frame's values from the first frame.
 - Drawing (follows each frame's choice of wide or 4:3): the sprite builder (72:8000) lets
   pieces through out to `WIDE_MAX` px either side; objects the game parks just off the left of its
   256 pixels (the Prologue's horses) are not drawn, via a per-slot table at $FE80 in our
@@ -295,14 +300,21 @@ disc as it goes):
   (every object of a kind, three or four, exactly 128 px apart: not a splash's particles,
   three of which can line up by chance and, echoed, slowed the bridge boss), are echoed like the rain (drawn again 256 px
   either side, the copies kept only past the 256 pixels on their own side), which puts a
-  copy where the next pillar round would be. Forgotten as each room starts.
+  copy where the next pillar round would be. The game moves a pillar 383 px, not 384, so
+  each row is kept exactly 128 px apart (a pillar a pixel or two out of step is put back:
+  else a copy lands a pixel off the pillar it meets). No copies onto a pillar the game is
+  hiding (frame 0), and none that would be seen within 96 px of a room's end wall: the
+  bridge ends in a pier where the next pillar would be, and the game, moving its pillars
+  only out of the 4:3 picture's sight, never shows one there. Forgotten as each room starts.
 - Scenery bands drawn only as far as the 4:3 picture shows them (Stage 2's bridge: the
   distant hills, castle and trees, blank tiles over 16 of the map's 64 columns): each map
   row seen scrolled apart from the playfield in the room (a row a playfield line shows in
   the same frame excepted) has its longest blank stretch, if 12 tiles or more, filled from
   both ends with the tile most often after (before) the one at its end in the band's rows
   (`scenery_fill`), drawn beside the original 256 pixels only (`vdc_set_map_fill`, by map
-  position, so it scrolls with the band). Gaps between clouds are shorter and left alone.
+  position, so it scrolls with the band). Gaps between clouds are shorter and left alone; a row less than half drawn
+  is no band (Stage 2's first room: an empty bottom row but for a tower, once seen scrolled
+  apart, was filled with floor tiles).
 - Level ends (Video > Level ends, on by default; `Wide.edges`): within the extension of a
   scrolling room's left or right limit the picture is shifted (`vdc_set_wide_shift`,
   host-side, latched per frame like `fb_wide`; the original 256 then start at
