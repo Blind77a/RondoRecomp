@@ -1,6 +1,35 @@
 # RondoRecomp
 
+[![release](https://img.shields.io/github/v/release/gminustwo/RondoRecomp?filter=v%2A&sort=semver&display_name=tag&label=release&color=orange)](https://github.com/gminustwo/RondoRecomp/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/gminustwo/RondoRecomp/total?label=downloads&color=brightgreen)](https://github.com/gminustwo/RondoRecomp/releases)
+
 Static recompilation of *Castlevania: Rondo of Blood* (PC Engine Super CD-ROM²) into a native PC application.
+
+## Changes in this fork
+
+This fork of [gminustwo/RondoRecomp](https://github.com/gminustwo/RondoRecomp) adds these
+options to the in-game menu's Video page (F1 / Back):
+
+- **Widescreen 16:9** (off by default): shows more of the level on each side, 42 game pixels
+  a side with the TV's 4:3 pixels and 70 with square pixels. Background, enemies, items and
+  Stage 2's rain fill the wider picture, and the score display moves to the left edge. Rooms
+  the camera doesn't scroll through sideways (shafts, boss rooms) stay 4:3. Off in
+  RetroAchievements hardcore mode.
+- **Level ends** (on by default): at the start or end of a level, the extra width goes to the
+  side the level continues on, so there's no black past the level's wall. The picture stays
+  still until Richter has walked far enough for the camera to scroll, and enemies on that side
+  appear further out so they don't pop into view.
+- **Wide menus** (on by default): the file select menus go widescreen too, with their wavy
+  background carried on seamlessly to the sides. Screens whose art doesn't repeat (the title
+  screen, story scenes) stay 4:3.
+- **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
+  stepping through its 8 levels a channel.
+- **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as
+  the burning town's sky, is drawn as the colour it stands for. Hand-drawn texture is left as
+  it is.
+
+Smooth fades and Smooth dithering change only the picture: the game plays the same, and save
+states are unaffected. See [docs/PLAYER_README.txt](docs/PLAYER_README.txt) for details.
 
 ## Supported Platforms
 
@@ -34,6 +63,8 @@ ISO/WAV/BIN tracks); everything derived from it goes to `work/`, which is git-ig
 - Rewinding up to 30 min that works like the Konami Castlevania collections
 - Compatible with the original PC Engine version, English patched, Wii, and Wii U versions
 - Full suite of video options including filters and screen effects
+- 16:9 widescreen, with level ends and menus filled in rather than black
+- Smooth fades and smooth dithering
 - Save stating
 - Cheats
 - Super Castlevania IV moves (Gameplay page): 8-way whipping and dove throwing, and a limp whip, after Pizzano's Super Rondo of Blood hack (RondoRecomp's own version)
@@ -65,7 +96,10 @@ Findings so far: [docs/findings.md](docs/findings.md).
 - A gothic start screen (a candlelit town at night under a pale moon) and menus in arched
   gold-and-umber frames with blackletter titles, with controller, keyboard and mouse.
 - An in-game menu (F1 / Back): video modes for 4K, 16:9 and ultrawide screens (4:3 with
-  blurred sides, square pixels, stretch, integer scaling, sharp filtering), cinematic
+  blurred sides, square pixels, stretch, integer scaling, sharp filtering), a 16:9 widescreen
+  option (off by default) that shows more of the level on each side (with the picture moving
+  over at level ends and the file select menus wide too), smooth fades and smooth dithering,
+  cinematic
   skipping, cheats (infinite health, hearts, lives), modern controller layout with
   sub-weapon / Item Crash / backflip buttons, rebindable controls (keys of your own to move, such
   as WASD, alongside the arrows), and a Japanese option (with your Japanese disc).

@@ -203,6 +203,12 @@ states, choose the slot, reset, back to the start screen, quit, and:
 Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            VSync: on (the default), each frame is shown when the screen refreshes, so the
            picture never tears; off shows it at once
+           Widescreen: Off (4:3, the default) or 16:9, more of the level on each side;
+           see below
+           Level ends: with widescreen, at the start or end of a level, Picture moves
+           over (the default) or Black; see below
+           Wide menus: with widescreen, the file select menus wide too (On, the default)
+           or 4:3; see below
            Aspect ratio: 4:3 (as on a TV), square pixels, or stretched to fill the screen
            Size: Fit screen (as big as the screen allows), or Whole multiples (every game
            pixel the same size; leaves a border)
@@ -212,6 +218,13 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            soft TV picture); Effect strength: Light, Medium or Strong
            Beside the picture: when the picture is narrower than the screen, a blurred
            copy of it, or black
+           Smooth fades: Off (the default) or on: the game's fades in and out (scenes,
+           stages, story text) blend smoothly in full colour instead of in the console's
+           8 steps. Only the picture changes; the game plays the same
+           Smooth dithering: Off (the default) or on: the checkerboards and patterns of
+           dots the game mixes two colours with (the red sky behind the burning town) are
+           drawn as the smooth colour they stand for. Drawn texture (stone, wood, grass,
+           outlines) is left as it is. Only the picture changes
 Gameplay   Skip cinematics: Press START, Automatically, or Never. During the logo and
            the intro (the story narration and opening before the title screen), START, A
            or X goes straight to the title screen, the way the game itself allows once it
@@ -240,6 +253,33 @@ Language   English patch or Japanese original (each is its own disc; see below)
 Options are kept in %APPDATA%\RondoRecomp\RondoRecomp\settings.ini (on Linux in
 ~/.local/share/RondoRecomp/RondoRecomp/settings.ini), or in the user folder in portable
 mode (see Portable mode below).
+
+Widescreen (16:9)
+-----------------
+Off by default: the game is its original 4:3 picture. On a 16:9 screen, Video > Widescreen
+16:9 draws more of the level on both sides: the background, enemies, items and weather
+(Stage 2's rain falls across the whole picture), with the score display moved to the left
+edge. It fills a 16:9 screen with Aspect ratio 4:3 (TV) or square pixels. With 4:3 (TV)
+enemies come on, wait and leave where the original game has them (they are already there,
+just out of the 4:3 picture), so the game plays the same. Square pixels show a little more
+(70 game pixels a side, not 42), so there enemies come on and start moving 72 pixels past
+the original screen, not 64, to stay out of sight until they are in the picture.
+Ultrawide screens show the 16:9 picture with the sides beside it.
+Rooms the camera does not scroll through sideways (vertical shafts, boss rooms) keep the
+4:3 picture, as do cinematics and menus. At a level's start or end (where the camera stops
+at the level's wall), Video > Level ends: Picture moves over (the default) puts all the
+extra width on the side the level goes on, so there is no black past the wall: the
+picture stays put until Richter has walked far enough for the camera to scroll, and
+enemies on that side come on and start moving further out, out of sight. Black shows
+the picture centred with black past the wall. Video > Wide menus (on by default) draws
+the file select menus wide as well, their wavy background carried on to the sides (a
+page sliding over passes behind them); screens whose picture does not repeat (the title
+screen, story scenes) stay 4:3. Where the
+picture goes from 4:3 to wide (the Prologue after its story scene, a scrolling room after a
+vertical one) it grows out to the sides over a moment. Turning it on takes effect from the
+next room. Widescreen is off in RetroAchievements' hardcore mode. The game was not made for
+it, so a glitch at the edges here and there is possible; turn it off if something looks
+wrong.
 
 Your own icon (Windows)
 -----------------------

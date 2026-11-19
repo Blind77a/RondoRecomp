@@ -18,12 +18,18 @@ typedef struct Settings {
     /* video */
     bool fullscreen;
     bool vsync;            /* show each frame on the screen's refresh (no tearing) */
+    bool widescreen;       /* 16:9: show more of the level on wide screens (wide.h; off by default) */
+    bool wide_edges;       /* widescreen at a level's end: the picture moves over instead of
+                            * showing black past its wall (wide.h; on by default) */
+    bool wide_menus;       /* widescreen on the title and file menus too (wide.h; on by default) */
     int aspect;            /* ASPECT_* */
     int scaling;           /* SCALE_*: fit the screen, or whole multiples only */
     int filter;            /* FILTER_* */
     int effect;            /* EFFECT_*: scanlines, a CRT (flat or curved), composite */
     int effect_strength;   /* STRENGTH_* */
     int sides;             /* SIDES_*: what fills a wide screen beside the picture */
+    bool smooth_fades;     /* the game's fades blended in 24-bit colour (video.h; off by default) */
+    bool smooth_dither;    /* the game's dithering drawn as the colour it stands for (dedither.h; off by default) */
     /* gameplay */
     int skip;              /* SKIP_*: story cinematics */
     bool rewind;

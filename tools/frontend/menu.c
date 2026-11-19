@@ -31,6 +31,8 @@ static const char *const OFF_ON[] = {"Off", "On"};
 static const char *const ASPECTS[] = {"4:3 (TV)", "Square pixels", "Stretch to fill"};
 static const char *const FILTERS[] = {"Sharp", "Nearest", "Smooth"};
 static const char *const SIDES[] = {"Blurred picture", "Black"};
+static const char *const WIDES[] = {"Off (4:3)", "16:9"};
+static const char *const EDGES[] = {"Black", "Picture moves over"};
 static const char *const EFFECTS[] = {"Off", "Scanlines", "CRT", "Curved CRT", "Composite"};
 static const char *const EFFECT_STRENGTHS[] = {"Light", "Medium", "Strong"};
 static const char *const SCALINGS[] = {"Fit screen", "Whole multiples"};
@@ -79,12 +81,17 @@ static const Item START_ITEMS[] = {
 static const Item VIDEO_ITEMS[] = {
     TOGGLE("Fullscreen", fullscreen, MENU_VIDEO_CHANGED),
     TOGGLE("VSync", vsync, MENU_VIDEO_CHANGED),
+    {IT_TOGGLE, "Widescreen", 0, F_BOOL(widescreen), WIDES, 2, 0, MENU_SETTINGS_CHANGED},
+    {IT_TOGGLE, "Level ends", 0, F_BOOL(wide_edges), EDGES, 2, 0, MENU_SETTINGS_CHANGED},
+    TOGGLE("Wide menus", wide_menus, MENU_SETTINGS_CHANGED),
     CHOICE("Aspect ratio", aspect, ASPECTS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Size", scaling, SCALINGS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Filter", filter, FILTERS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Screen effect", effect, EFFECTS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Effect strength", effect_strength, EFFECT_STRENGTHS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Beside the picture", sides, SIDES, 0, MENU_SETTINGS_CHANGED),
+    TOGGLE("Smooth fades", smooth_fades, MENU_SETTINGS_CHANGED),
+    TOGGLE("Smooth dithering", smooth_dither, MENU_SETTINGS_CHANGED),
     {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
 };
 static const Item GAMEPLAY_ITEMS[] = {
@@ -170,7 +177,7 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Language", "The English patch (fan translation) or the Japanese original: each is its own disc."},
     {"Load state", "Continue from the save state in the slot below."},
     {"State slot", "Which of the nine save-state slots to use (F6 / F7 in the game)."},
-    {"Video", "Fullscreen, the picture's shape, size, filter and screen effect."},
+    {"Video", "Fullscreen, 16:9 widescreen, the picture's shape, size, filter, screen effect, smooth fades and dithering."},
     {"Gameplay", "Story scenes, rewind, volume, the start screen and Super Castlevania IV moves."},
     {"Cheats", "Infinite health, hearts and lives; Maria."},
     {"Controls", "The buttons and keys: change any of them."},
@@ -182,6 +189,7 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Start screen", "Leave the game for the start screen."},
     {"Fullscreen", "Use the whole screen at its own resolution (F11)."},
     {"VSync", "Show each frame when the screen refreshes: no tearing. Off: at once, maybe torn."},
+    {"Widescreen", "16:9: more of the level each side. Experimental: some rooms stay 4:3; glitches possible."},
     {"Aspect ratio", "4:3 as on a TV, square pixels, or stretched to fill."},
     {"Size", "As big as the screen allows, or whole multiples only."},
     {"Filter", "Sharp: crisp, even pixels. Nearest: raw. Smooth: softened."},

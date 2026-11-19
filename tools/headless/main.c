@@ -13,6 +13,8 @@
 #include "../frontend/game.h"
 #include "../frontend/moves.h"
 #include "../frontend/prompt.h"
+#include "../frontend/wide.h"
+#include "../frontend/dedither.h"
 #include "recomp/recomp.h"
 #include "../recomp/capture_script.h"
 #include "util/png.h"
@@ -170,6 +172,7 @@ int main(int argc, char **argv)
         return 2;
     }
     long frames = 600, shot_every = 60;
+    bool dedither_shots = false;   /* --dedither: screenshots with Smooth dithering */
     const char *out = "work/shots";
     bool log_bios = false, log_all = false;
     const char *bios_reset = NULL, *wav_path = NULL, *seeds_path = NULL, *misses_path = NULL;
@@ -207,6 +210,12 @@ int main(int argc, char **argv)
     int n_run = 0;
     long rows_from = -1, rows_to = -1;   /* --row-scroll A:B: each frame's bands of rows by X scroll */
     long sat_at[8]; /* --dump-sat FRAME: print the sprite table after that frame */
+    int wide = 0;   /* --wide N: widescreen extension in pixels per side (42 = 16:9 at 4:3, 70 square) */
+    bool wide_edges = false;   /* --wide-edges: Video > Level ends */
+    bool wide_menus = false;   /* --wide-menus: Video > Wide menus */
+    int last_shift = 0;
+    long wrep_at[8]; /* --wide-report FRAME: which widescreen game changes are in */
+    int n_wrep = 0;
     int n_sat = 0;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atol(argv[++i]);
@@ -283,6 +292,17 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--run") && i + 1 < argc && n_run < 16) {
             if (sscanf(argv[++i], "%ld:%ld", &run_at[n_run][0], &run_at[n_run][1]) == 2) n_run++;
         }
+        else if (!strcmp(argv[i], "--wide") && i + 1 < argc) wide = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--wide-edges")) wide_edges = true;   /* Video > Level ends */
+        else if (!strcmp(argv[i], "--wide-menus")) wide_menus = true;   /* Video > Wide menus */
+        else if (!strcmp(argv[i], "--smooth-fades")) vce_set_smooth_fades(true);
+        else if (!strcmp(argv[i], "--dedither")) dedither_shots = true;
+        else if (!strcmp(argv[i], "--wide-skip") && i + 1 < argc) {   /* leave patches out: list of indexes */
+            char tmp[128];
+            snprintf(tmp, sizeof tmp, "%s", argv[++i]);
+            for (char *t = strtok(tmp, ","); t; t = strtok(NULL, ",")) wide_debug_skip |= 1u << atoi(t);
+        }
+        else if (!strcmp(argv[i], "--wide-report") && i + 1 < argc && n_wrep < 8) wrep_at[n_wrep++] = atol(argv[++i]);
         else if (!strcmp(argv[i], "--row-scroll") && i + 1 < argc) sscanf(argv[++i], "%ld:%ld", &rows_from, &rows_to);
         else if (!strcmp(argv[i], "--dump-sat") && i + 1 < argc && n_sat < 8) sat_at[n_sat++] = atol(argv[++i]);
         else if (!strcmp(argv[i], "--vram-watch") && i + 1 < argc) {
@@ -379,6 +399,10 @@ int main(int argc, char **argv)
     game_watch_reset(&gw, &pce);
     moves_reset(&moves);
     TitlePrompt tp = {.pad = prompt_dev == 1};
+    static Wide wd;
+    wd.want = wide > WIDE_MAX ? WIDE_MAX : wide;
+    wd.edges = wide_edges;
+    wd.menus = wide_menus;
     for (int i = 0; i < n_ww; i++) ww_last[i] = pce.wram[ww_addr[i]];
     memcpy(pw_last, pce.vce.pal, sizeof pw_last);
     uint8_t ram_last[32];
@@ -412,9 +436,21 @@ int main(int argc, char **argv)
         if (skip_cine && game_in_cinematic(&pce)) { pce.pad = 0; skipped++; }
         pce.pad = moves_pad(&moves, &pce, &move_opts, pce.pad, pce.pad & PAD_II);
         if (prompt_dev >= 0) prompt_before_frame(&tp, &pce);
+        wide_frame(&wd, &pce);
+        if (wide_edges && wd.shift != last_shift) {   /* --wide-edges: where the picture moves over */
+            printf("wide shift %d at frame %ld\n", wd.shift, f);
+            last_shift = wd.shift;
+        }
         moves_before_frame(&moves, &pce, &move_opts, true);
         pce_run_frame(&pce);
         if (prompt_dev >= 0) prompt_after_frame(&tp, &pce);
+        for (int i = 0; i < n_wrep; i++)
+            if (wrep_at[i] == f + 1) {
+                char buf[4096];
+                wide_report(&pce, buf, sizeof buf);
+                printf("widescreen after frame %ld (state %02X/%02X, drawn %d px wider): %s\n%s", f + 1, pce.wram[0x30],
+                       pce.wram[0x31], pce.vdc.fb_wide, wd.patched ? "every game change in" : "not every game change in", buf);
+            }
         moves_after_frame(&moves, &pce, &move_opts, true);
         game_apply_cheats(&pce, &cheats, &gw);
         {
@@ -493,7 +529,9 @@ int main(int argc, char **argv)
         if ((shot_every > 0 && (f + 1) % shot_every == 0) || f + 1 == start_frame + frames) {
             char path[512];
             snprintf(path, sizeof path, "%s/frame_%05ld.png", out, f + 1);
-            if (!png_write_argb(path, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W))
+            static uint32_t dd[PCE_FB_MAX_W * PCE_FB_MAX_H];
+            if (dedither_shots) dedither(pce.vdc.fb, dd, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
+            if (!png_write_argb(path, dedither_shots ? dd : pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W))
                 fprintf(stderr, "cannot write %s (does the directory exist?)\n", path);
             HuC6280 *c = &pce.cpu;
             printf("frame %5ld  PC=%02X:%04X  CR=%04X MWR=%04X SATB=%04X  %dx%d  irq_m=%02X  vec1=%02X%02X  io?=%u\n",
