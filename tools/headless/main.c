@@ -203,6 +203,8 @@ int main(int argc, char **argv)
     FILE *ram_trace = NULL;   /* --ram-trace FILE: WRAM after every frame */
     long start_frame = 0;
     int prompt_dev = -1;   /* --prompt pad|keys: the title's PUSH RUN BUTTON! as rondo.exe shows it */
+    long layout_dump_at = -1;          /* --dump-layout FRAME:FILE: for the title art converter (titleart.h) */
+    char layout_dump_path[256] = "";
     long vram_dump_at = -1;            /* --dump-vram FRAME:FILE: all of VRAM after that frame */
     long adpcm_dump_at = -1;           /* --dump-adpcm FRAME:FILE: the 64 KiB of ADPCM RAM */
     char adpcm_dump_path[256] = "";
@@ -214,7 +216,7 @@ int main(int argc, char **argv)
     int wide = 0;   /* --wide N: widescreen extension in pixels per side (42 = 16:9 at 4:3, 70 square) */
     bool wide_edges = false;   /* --wide-edges: Video > Level ends */
     bool wide_menus = false;   /* --wide-menus: Video > Wide menus */
-    static TitleArt title_art;   /* --title-art FILE: 396 x 225 ARGB, raw (titleart.h): shots of the title with it */
+    static TitleArt title_art;   /* --title-art FILE: 396 x 228 ARGB, raw (titleart.h): shots of the title with it */
     int last_shift = 0;
     long wrep_at[8]; /* --wide-report FRAME: which widescreen game changes are in */
     int n_wrep = 0;
@@ -289,6 +291,7 @@ int main(int argc, char **argv)
                 ww_addr[n_ww++] = (unsigned)strtoul(t, NULL, 16) & 0x1FFF;
         }
         else if (!strcmp(argv[i], "--prompt") && i + 1 < argc) prompt_dev = !strcmp(argv[++i], "pad");
+        else if (!strcmp(argv[i], "--dump-layout") && i + 1 < argc) sscanf(argv[++i], "%ld:%255s", &layout_dump_at, layout_dump_path);
         else if (!strcmp(argv[i], "--dump-vram") && i + 1 < argc) sscanf(argv[++i], "%ld:%255s", &vram_dump_at, vram_dump_path);
         else if (!strcmp(argv[i], "--dump-adpcm") && i + 1 < argc) sscanf(argv[++i], "%ld:%255s", &adpcm_dump_at, adpcm_dump_path);
         else if (!strcmp(argv[i], "--run") && i + 1 < argc && n_run < 16) {
@@ -298,12 +301,13 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--wide-edges")) wide_edges = true;   /* Video > Level ends */
         else if (!strcmp(argv[i], "--wide-menus")) wide_menus = true;   /* Video > Wide menus */
         else if (!strcmp(argv[i], "--title-art") && i + 1 < argc) {
+            static uint32_t tpx[TITLEART_W * TITLEART_FILE_H];
             FILE *tf = fopen(argv[++i], "rb");
             if (tf) {
-                title_art.loaded = fread(title_art.px, sizeof title_art.px, 1, tf) == 1;
+                if (fread(tpx, sizeof tpx, 1, tf) == 1) titleart_parse(&title_art, tpx, TITLEART_W, TITLEART_FILE_H);
                 fclose(tf);
             }
-            if (!title_art.loaded) fprintf(stderr, "cannot read %s (396 x 225 ARGB, raw)\n", argv[i]);
+            if (!title_art.loaded) fprintf(stderr, "cannot read %s (396 x 228 ARGB, raw)\n", argv[i]);
         }
         else if (!strcmp(argv[i], "--smooth-fades")) vce_set_smooth_fades(true);
         else if (!strcmp(argv[i], "--dedither")) dedither_shots = true;
@@ -517,6 +521,19 @@ int main(int argc, char **argv)
             FILE *vf = fopen(vram_dump_path, "wb");
             if (vf) { fwrite(pce.vdc.vram, 2, 0x8000, vf); fclose(vf); }
         }
+        if (layout_dump_at == f + 1) {
+            /* for the title art converter: the screen's 28 x 32 map entries (titleart_layout),
+             * then each pixel of its 256 x 225 background as a palette entry, 16 bits each */
+            static uint16_t lay[TITLEART_ROWS][TITLEART_COLS], ent[256 * TITLEART_H];
+            titleart_layout(&pce.vdc, lay);
+            titleart_entries(&pce.vdc, ent);
+            FILE *lf = fopen(layout_dump_path, "wb");
+            if (lf) {
+                fwrite(lay, sizeof lay, 1, lf);
+                fwrite(ent, sizeof ent, 1, lf);
+                fclose(lf);
+            }
+        }
         if (adpcm_dump_at == f + 1) {
             FILE *af = fopen(adpcm_dump_path, "wb");
             if (af) { fwrite(pce.adpcm, 1, sizeof pce.adpcm, af); fclose(af); }
@@ -546,7 +563,7 @@ int main(int argc, char **argv)
             static uint32_t ta[PCE_FB_MAX_W * PCE_FB_MAX_H];
             int fw = pce.vdc.fb_wide;
             if (title_art.loaded && pce.vdc.fb_w - 2 * fw == 256 &&
-                titleart_compose(&title_art, pce.vdc.fb + fw, shot + fw, pce.vdc.fb_h, PCE_FB_MAX_W, TITLEART_SIDE, ta)) {
+                titleart_compose(&title_art, &pce, shot + fw, pce.vdc.fb_h, PCE_FB_MAX_W, TITLEART_SIDE, ta)) {
                 static bool said;
                 if (!said) printf("title art first shown at frame %ld\n", f + 1);
                 said = true;

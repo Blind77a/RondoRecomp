@@ -3,126 +3,93 @@
 
 #include <string.h>
 
-/* rows of the title where its prompt is (PUSH ... BUTTON / KEY, which blinks and is worded
- * for the controller or the keyboard): left out of the comparison */
-#define PROMPT_Y0 138
-#define PROMPT_Y1 157
-
-static int dist2(uint32_t a, uint32_t b)
+bool titleart_parse(TitleArt *t, const uint32_t *px, int w, int h)
 {
-    int d = 0;
-    for (int s = 0; s < 24; s += 8) {
-        int x = (int)(a >> s & 0xFF) - (int)(b >> s & 0xFF);
-        d += x * x;
+    t->loaded = false;
+    if (w != TITLEART_W || h < TITLEART_FILE_H) return false;
+    const uint32_t *meta = px + TITLEART_H * w;
+    if ((meta[0] & 0xFFFFFF) != 0x525331) return false;   /* 'R' 'S' '1' */
+    for (int y = 0; y < TITLEART_H; y++)
+        for (int k = 0; k < 2 * TITLEART_SIDE; k++) {
+            int x = k < TITLEART_SIDE ? k : TITLEART_SIDE + 256 + (k - TITLEART_SIDE);
+            uint32_t c = px[y * w + x];
+            t->side[y][k] = (c >> 24) == 0 ? TITLEART_NONE : (uint16_t)((c >> 16 & 0xFF) | (c >> 8 & 1) << 8);
+        }
+    for (int n = 0; n < TITLEART_ROWS * TITLEART_COLS; n++) {
+        uint32_t c = meta[1 + n];
+        t->layout[n / TITLEART_COLS][n % TITLEART_COLS] = (uint16_t)((c >> 16 & 0xFF) | (c >> 8 & 0xFF) << 8);
     }
-    return d;
+    t->shown = false;
+    return t->loaded = true;
 }
 
-static void prepare(TitleArt *t)
+static int map_w(const Vdc *d) { static const int w[4] = {32, 64, 128, 128}; return w[(d->reg[9] >> 4) & 3]; }
+static int map_h(const Vdc *d) { return (d->reg[9] & 0x40) ? 64 : 32; }
+
+void titleart_layout(const Vdc *d, uint16_t out[TITLEART_ROWS][TITLEART_COLS])
 {
-    t->prepared = true;
-    t->ncol = 0;
+    const uint16_t *rs = vdc_row_scroll(), *my = vdc_row_map_y();
+    int mw = map_w(d), mh = map_h(d), rows = d->fb_h < PCE_FB_MAX_H ? d->fb_h : PCE_FB_MAX_H;
+    for (int ty = 0; ty < TITLEART_ROWS; ty++) {
+        int y = ty * 8 + 4;
+        if (y >= rows) y = rows - 1;
+        int r = (my[y] & (mh * 8 - 1)) >> 3, first = rs[y] >> 3;
+        for (int c = 0; c < TITLEART_COLS; c++) out[ty][c] = d->vram[r * mw + ((first + c) & (mw - 1))];
+    }
+}
+
+void titleart_entries(const Vdc *d, uint16_t *out)
+{
+    const uint16_t *rs = vdc_row_scroll(), *my = vdc_row_map_y();
+    int mw = map_w(d), mh = map_h(d), rows = d->fb_h < PCE_FB_MAX_H ? d->fb_h : PCE_FB_MAX_H;
     for (int y = 0; y < TITLEART_H; y++)
-        for (int x = 0; x < TITLEART_W; x++) {
-            uint32_t c = t->px[y][x] & 0xFFFFFF;
-            bool mid = x >= TITLEART_SIDE && x < TITLEART_SIDE + 256;
-            int k = 0;
-            while (k < t->ncol && t->col[k] != c) k++;
-            if (k == t->ncol) {
-                if (mid && t->ncol < TITLEART_COLOURS) t->col[t->ncol++] = c;
-                else k = -1;
-            }
-            t->id[y][x] = (uint8_t)(k < 0 ? 0xFF : k);
-        }
-    /* side colours not in the reference (and any past the table): the nearest that is */
-    for (int y = 0; y < TITLEART_H; y++)
-        for (int x = 0; x < TITLEART_W; x++) {
-            if (t->id[y][x] != 0xFF) continue;
-            int best = 0, bd = 1 << 30;
-            for (int k = 0; k < t->ncol; k++) {
-                int d = dist2(t->px[y][x], t->col[k]);
-                if (d < bd) { bd = d; best = k; }
-            }
-            t->id[y][x] = (uint8_t)best;
+        for (int x = 0; x < 256; x++) {
+            if (y >= rows) { out[y * 256 + x] = 0; continue; }
+            int py = my[y] & (mh * 8 - 1), px = (rs[y] + x) & (mw * 8 - 1);
+            uint16_t e = d->vram[(py >> 3) * mw + (px >> 3)];
+            uint32_t base = ((uint32_t)(e & 0x7FF) * 16 + (py & 7)) & 0x7FFF;
+            uint16_t p01 = d->vram[base], p23 = d->vram[(base + 8) & 0x7FFF];
+            int bit = 7 - (px & 7);
+            int c = ((p01 >> bit) & 1) | ((p01 >> (8 + bit)) & 1) << 1 | ((p23 >> bit) & 1) << 2 | ((p23 >> (8 + bit)) & 1) << 3;
+            out[y * 256 + x] = c ? (uint16_t)((e >> 12) << 4 | c) : 0;
         }
 }
 
-bool titleart_compose(TitleArt *t, const uint32_t *raw, const uint32_t *fb, int h, int pitch, int ext, uint32_t *out)
+bool titleart_compose(TitleArt *t, const Pce *p, const uint32_t *fb, int h, int pitch, int ext, uint32_t *out)
 {
-    if (!t->loaded || h < 200 || ext <= 0) return t->shown = false;
-    if (!t->prepared) prepare(t);
-    if (t->ncol == 0) return t->shown = false;
+    if (!t->loaded || h < 200 || ext <= 0 || p->vdc.fb_h < 200) return t->shown = false;
     if (ext > TITLEART_SIDE) ext = TITLEART_SIDE;
     if (h > TITLEART_H) h = TITLEART_H;
 
-    /* what each reference colour has become: the colour the frame has most often where the
-     * reference has it (every 2nd pixel each way; a few candidates a colour) */
-    enum { CAND = 4 };
-    static uint32_t cand[TITLEART_COLOURS][CAND];
-    static int count[TITLEART_COLOURS][CAND];
-    memset(count, 0, sizeof count);
-    int total = 0;
-    for (int y = 1; y < h; y += 2) {
-        if (y >= PROMPT_Y0 && y < PROMPT_Y1) continue;
-        const uint32_t *f = raw + y * pitch;
-        const uint8_t *ids = &t->id[y][TITLEART_SIDE];
-        for (int x = 1; x < 256; x += 2) {
-            int k = ids[x];
-            uint32_t c = f[x] & 0xFFFFFF;
-            int j = 0, low = 0;
-            while (j < CAND && count[k][j] && cand[k][j] != c) {
-                if (count[k][j] < count[k][low]) low = j;
-                j++;
-            }
-            if (j == CAND) j = low, count[k][j] = 0;   /* (replaces the rarest) */
-            cand[k][j] = c;
-            count[k][j]++;
-            total++;
-        }
-    }
-    uint32_t map[TITLEART_COLOURS], seen[TITLEART_COLOURS];
-    int agree = 0, distinct = 0;
-    for (int k = 0; k < t->ncol; k++) {
-        int b = 0;
-        for (int j = 1; j < CAND; j++)
-            if (count[k][j] > count[k][b]) b = j;
-        map[k] = count[k][b] ? cand[k][b] : 0;
-        agree += count[k][b];
-        if (!count[k][b] || !map[k]) continue;
-        int q = 0;
-        while (q < distinct && seen[q] != map[k]) q++;
-        if (q == distinct) seen[distinct++] = map[k];   /* (colours other than black) */
-    }
-    /* a colour with no samples this frame (one only in the prompt's rows, say): as the
-     * nearest colour that has, so it fades with the rest */
-    for (int k = 0; k < t->ncol; k++) {
-        if (count[k][0] || count[k][1] || count[k][2] || count[k][3]) continue;
-        int best = -1, bd = 1 << 30;
-        for (int q = 0; q < t->ncol; q++) {
-            if (!(count[q][0] || count[q][1] || count[q][2] || count[q][3])) continue;
-            int d = dist2(t->col[k], t->col[q]);
-            if (d < bd) { bd = d; best = q; }
-        }
-        map[k] = best >= 0 ? map[best] : 0;
-    }
-    /* the title: the frame's pixels group as the reference's colours do. Shown once some of
-     * its colours are up (not a black screen, which groups any way at all), then kept through
-     * a fade to black and through a little more disagreement (sprites such as the lightning) */
-    bool title = total && agree * 100 >= total * (t->shown ? 85 : 92);
-    if (!t->shown && distinct < 6) title = false;
-    t->shown = title;
-    if (!title) return false;
+    /* the screen: its map entries stand where the file's do (most of them: a prompt
+     * blinks, a stage map's name box changes; a little less once shown) */
+    uint16_t now[TITLEART_ROWS][TITLEART_COLS];
+    titleart_layout(&p->vdc, now);
+    int same = 0;
+    for (int r = 0; r < TITLEART_ROWS; r++)
+        for (int c = 0; c < TITLEART_COLS; c++) same += now[r][c] == t->layout[r][c];
+    int all = TITLEART_ROWS * TITLEART_COLS;
+    t->shown = same * 100 >= all * (t->shown ? 75 : 85);
+    if (!t->shown) return false;
 
+    /* the palette can be up before the picture is (the title's colours are set, then its
+     * background switched on): while the middle is all black, so are the sides */
+    bool lit = false;
+    for (int y = 4; y < h && !lit; y += 8)
+        for (int x = 4; x < 256 && !lit; x += 8) lit = (fb[y * pitch + x] & 0xFFFFFF) != 0;
     int w = 256 + 2 * ext;
     for (int y = 0; y < h; y++) {
         uint32_t *o = out + y * pitch;
         memcpy(o + ext, fb + y * pitch, 256 * sizeof *o);
-        /* the title's first column is a shade darker than the rest (unseen at a screen's edge,
-         * a line beside the art): drawn as the next */
+        /* the screen's first column can be a shade darker than the rest (unseen at a
+         * screen's edge, a line beside the art): drawn as the next */
         o[ext] = o[ext + 1];
+        /* (the colours this line was drawn with: the lightning changes them during the picture) */
+        const uint32_t *pal = vdc_line_palette(y);
         for (int x = 0; x < ext; x++) {
-            o[x] = 0xFF000000u | map[t->id[y][TITLEART_SIDE - ext + x]];
-            o[w - 1 - x] = 0xFF000000u | map[t->id[y][TITLEART_SIDE + 256 + ext - 1 - x]];
+            uint16_t l = t->side[y][TITLEART_SIDE - ext + x], r = t->side[y][TITLEART_SIDE + x];
+            o[x] = l == TITLEART_NONE || !lit ? 0xFF000000u : pal[l & 0x1FF];
+            o[w - ext + x] = r == TITLEART_NONE || !lit ? 0xFF000000u : pal[r & 0x1FF];
         }
     }
     return true;

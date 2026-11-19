@@ -22,6 +22,11 @@ void vce_reset(Vce *v);
  * blended through 256. Only the picture changes: the palette the game reads and writes, save
  * states and the game's behaviour are the same either way. Off by default. */
 void vce_set_smooth_fades(bool on);
+/* The 512 colours the picture is drawn with now (Smooth fades' blend while it is on). */
+const uint32_t *vce_shown_argb(const Vce *v);
+/* The 512 colours the line `row` of the last picture was drawn with (taken every 16 lines: a
+ * game can change colours while the picture is drawn, as the title's lightning does). */
+const uint32_t *vdc_line_palette(int row);
 void vce_write(Vce *v, uint16_t off, uint8_t val);
 uint8_t vce_read(Vce *v, uint16_t off);
 
