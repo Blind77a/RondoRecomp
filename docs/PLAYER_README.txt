@@ -265,11 +265,10 @@ Widescreen (16:9)
 Off by default: the game is its original 4:3 picture. On a 16:9 screen, Video > Widescreen
 16:9 draws more of the level on both sides: the background, enemies, items and weather
 (Stage 2's rain falls across the whole picture), with the score display moved to the left
-edge. It fills a 16:9 screen with Aspect ratio 4:3 (TV) or square pixels. With 4:3 (TV)
-enemies come on, wait and leave where the original game has them (they are already there,
-just out of the 4:3 picture), so the game plays the same. Square pixels show a little more
-(70 game pixels a side, not 42), so there enemies come on and start moving 72 pixels past
-the original screen, not 64, to stay out of sight until they are in the picture.
+edge. It fills a 16:9 screen with Aspect ratio 4:3 (TV) or square pixels (42 or 64 game
+pixels more a side). Enemies and scenery objects come on further past the original screen
+than the game's 64 pixels (92 with 4:3 TV pixels, 114 with square pixels), so even wide ones
+come in from out of sight; enemies walking in from there reach you a moment later.
 Ultrawide screens show the 16:9 picture with the sides beside it.
 Rooms the camera does not scroll through sideways (vertical shafts, boss rooms) keep the
 4:3 picture, as do cinematics and menus. At a level's start or end (where the camera stops
