@@ -44,6 +44,7 @@
 #include "wide.h"
 #include "dedither.h"
 #include "titleart.h"
+#include "title_art_data.h"
 
 #define FRAME_RATE (7159090.0 / (455.0 * 263.0))   /* 59.826 Hz */
 #define AUDIO_RATE 44100
@@ -167,30 +168,46 @@ static Wide wide;            /* 16:9 widescreen (wide.h): decided before every f
 static TitleArt arts[MAX_ARTS];
 static int n_arts, art_last;   /* (the one that matched last is tried first) */
 
+/* one title art file (titleart.h) from a loaded PNG; name for the log */
+static void add_title_art(SDL_Surface *s, const char *name)
+{
+    if (!s || n_arts >= MAX_ARTS) return;
+    SDL_Surface *c = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888);
+    SDL_DestroySurface(s);
+    if (!c) return;
+    static uint32_t px[TITLEART_W * TITLEART_FILE_H];
+    if (c->w == TITLEART_W && c->h >= TITLEART_FILE_H) {
+        for (int y = 0; y < TITLEART_FILE_H; y++)
+            memcpy(px + y * TITLEART_W, (const uint8_t *)c->pixels + y * c->pitch, TITLEART_W * 4);
+        if (titleart_parse(&arts[n_arts], px, TITLEART_W, TITLEART_FILE_H)) n_arts++;
+        else SDL_Log("%s is not title art made by the converter: not used", name);
+    } else {
+        SDL_Log("%s is %dx%d, not %dx%d: not used", name, c->w, c->h, TITLEART_W, TITLEART_FILE_H);
+    }
+    SDL_DestroySurface(c);
+}
+
+/* the player's own *_sides.png in the profile folder, then the built-in ones
+ * (title_art_data.h) that no file of the same name replaces */
 static void load_title_art(const char *dir)
 {
     int count = 0;
     char **names = SDL_GlobDirectory(dir, "*_sides.png", SDL_GLOB_CASEINSENSITIVE, &count);
-    for (int i = 0; names && i < count && n_arts < MAX_ARTS; i++) {
+    bool have_title = false, have_map = false;
+    for (int i = 0; names && i < count; i++) {
         char path[1200];
         snprintf(path, sizeof path, "%s%s", dir, names[i]);
-        SDL_Surface *s = SDL_LoadPNG(path);
-        if (!s) continue;
-        SDL_Surface *c = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888);
-        SDL_DestroySurface(s);
-        if (!c) continue;
-        static uint32_t px[TITLEART_W * TITLEART_FILE_H];
-        if (c->w == TITLEART_W && c->h >= TITLEART_FILE_H) {
-            for (int y = 0; y < TITLEART_FILE_H; y++)
-                memcpy(px + y * TITLEART_W, (const uint8_t *)c->pixels + y * c->pitch, TITLEART_W * 4);
-            if (titleart_parse(&arts[n_arts], px, TITLEART_W, TITLEART_FILE_H)) n_arts++;
-            else SDL_Log("%s is not title art made by the converter: not used", names[i]);
-        } else {
-            SDL_Log("%s is %dx%d, not %dx%d: not used", names[i], c->w, c->h, TITLEART_W, TITLEART_FILE_H);
-        }
-        SDL_DestroySurface(c);
+        have_title |= SDL_strcasecmp(names[i], "title_sides.png") == 0;
+        have_map |= SDL_strcasecmp(names[i], "map_sides.png") == 0;
+        add_title_art(SDL_LoadPNG(path), names[i]);
     }
     SDL_free(names);
+    if (!have_title)
+        add_title_art(SDL_LoadPNG_IO(SDL_IOFromConstMem(builtin_title_sides_png, sizeof builtin_title_sides_png), true),
+                      "built-in title_sides.png");
+    if (!have_map)
+        add_title_art(SDL_LoadPNG_IO(SDL_IOFromConstMem(builtin_map_sides_png, sizeof builtin_map_sides_png), true),
+                      "built-in map_sides.png");
 }
 
 /* A frame of the game. While rewinding (`live` false) the moves only draw: the frame shown is
