@@ -22,11 +22,12 @@ options to the in-game menu's Video page (F1 / Back):
 - **Wide menus** (on by default): the file select menus go widescreen too, with their wavy
   background carried on seamlessly to the sides. Screens whose art doesn't repeat (the title
   screen, story scenes) stay 4:3.
-- **Title art** (on by default, with widescreen): your own art beside still screens such as
-  the title and the stage map, from files such as `title_sides.png` and `map_sides.png` in
-  your profile folder. The files hold only the sides, as the game's own colour numbers, plus
-  the screen's tile layout to recognise it by: none of the game's picture. Your sides appear
-  with the screen from its first frame and fade and flash with it, lightning included.
+- **Title art** (on by default, with widescreen): the title screen and the stage map widened
+  with clouds of their own, built into the game. The art holds only the sides, as the game's
+  own colour numbers, plus the screen's tile layout to recognise it by: none of the game's
+  picture. It appears with the screen from its first frame and fades and flashes with it,
+  lightning included. A `title_sides.png` or `map_sides.png` of your own in the profile folder
+  is used instead.
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
 - **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as

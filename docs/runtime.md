@@ -354,8 +354,10 @@ disc as it goes):
   (`vdc_set_side_real`), so the page coming in enters at the screen's edge and the one going
   out leaves at the other. `rondo_headless --wide-menus`.
 - Title art (Video > Title art, on by default; `titleart.c`): the title's and the stage map's
-  art has no repeat, so their sides come from the player's own files: any `*_sides.png` in
-  the profile folder (up to 8), 396 x 228. They hold no picture of the game's: each side
+  art has no repeat, so their sides come from art files, 396 x 228: the built-in
+  title_sides.png and map_sides.png (`title_art_data.h`, compiled into the game), each
+  replaced by a file of the same name in the profile folder, and any other `*_sides.png`
+  there (up to 8 in all). They hold no picture of the game's: each side
   pixel (columns 0-69, 326-395 of rows 0-224) is a palette entry (R = low 8 bits, G bit 0 =
   bit 8; alpha 0 = none), drawn with what that entry held when the line beside it was drawn
   (`vdc_line_palette`, taken every 16 lines: the lightning changes colours while the picture is
