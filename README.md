@@ -38,7 +38,7 @@ ISO/WAV/BIN tracks); everything derived from it goes to `work/`, which is git-ig
 - Compatible with the original PC Engine version, English patched, Wii, and Wii U versions
 - Full suite of video options including filters and screen effects
 - 16:9 widescreen (off by default), with the picture moving over at level ends instead of showing black, and the file select menus wide too
-- Title art (with widescreen): your own art beside still screens such as the title and the stage map (`title_sides.png`, `map_sides.png` in the profile folder; never shipped)
+- Title art (with widescreen): the title screen and the stage map widened with built-in side art (palette entries and tile layout only, none of the game's picture); your own `title_sides.png` / `map_sides.png` in the profile folder replaces it
 - Smooth fades and smooth dithering (off by default): fades blended in 24-bit colour, and the game's checkerboard dithering drawn as the colour it stands for
 - Save stating
 - Cheats
