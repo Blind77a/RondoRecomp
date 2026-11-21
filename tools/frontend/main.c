@@ -44,7 +44,6 @@
 #include "wide.h"
 #include "dedither.h"
 #include "titleart.h"
-#include "doors.h"
 #include "title_art_data.h"
 
 #define FRAME_RATE (7159090.0 / (455.0 * 263.0))   /* 59.826 Hz */
@@ -1209,13 +1208,16 @@ int main(int argc, char **argv)
         GameCheats cheats = {set.cheat_health, set.cheat_hearts, set.cheat_lives, set.maria_unlocked, set.play_maria};
         bool hardcore = ach_hardcore();
         if (hardcore) memset(&cheats, 0, sizeof cheats);   /* RetroAchievements' hardcore mode: none */
-        move_opts = (MoveOptions){set.eight_way && !hardcore && !test_mode, set.limp_whip && !hardcore && !test_mode};
+        move_opts = (MoveOptions){set.eight_way && !hardcore && !test_mode, set.limp_whip && !hardcore && !test_mode,
+                                  set.sticky_stairs && !hardcore && !test_mode};
         vce_set_smooth_fades(set.smooth_fades && !test_mode);   /* only the picture: kept in hardcore */
         {   /* widescreen fills the window's shape, up to 16:9 (off in hardcore mode: it changes
              * the game's code and shows more of the level) */
             int ww, wh;
             SDL_GetRenderOutputSize(ren, &ww, &wh);
             wide.edges = set.wide_edges;
+            wide.room_sides = set.room_sides;
+            wide.near_spawns = set.near_spawns;
             wide.menus = set.wide_menus;
             wide.want = set.widescreen && !hardcore && wh > 0
                             ? wide_extent((double)ww / (double)wh, video_picture_aspect(&video, &set)) : 0;
@@ -1339,21 +1341,6 @@ int main(int argc, char **argv)
                 ran_frame = true;
                 if (have_rewind && set.rewind) rewind_record(&rw, &pce, pce.pad);
                 flush_bram(&ss);
-                /* Video > Fast doors (doors.h): the walk into black past a door runs faster,
-                 * its extra frames neither shown nor heard (not in hardcore) */
-                for (int k = 1; k < DOORS_FAST && set.fast_doors && !test_mode && !hardcore && !features_dir &&
-                                game_playing(&pce) && doors_in_black(&pce.vdc); k++) {
-                    run_frame();
-                    audio_frac += AUDIO_RATE / FRAME_RATE;   /* a frame's worth, not heard */
-                    int skip_n = (int)audio_frac;
-                    audio_frac -= skip_n;
-                    pce_audio_render(&pce, samples, skip_n);
-                    game_apply_cheats(&pce, &cheats, &gw);
-                    game_apply_run(&pce, set.run && !hardcore && input_run_held(&in), &gw);
-                    ach_frame();
-                    if (have_rewind && set.rewind) rewind_record(&rw, &pce, pce.pad);
-                    flush_bram(&ss);
-                }
                 if (features_dir && game_playing(&pce) && pce.frame > 16200 && pce.wram[RONDO_HEALTH] < t_min_health)
                     t_min_health = pce.wram[RONDO_HEALTH];
             }
@@ -1428,12 +1415,7 @@ int main(int argc, char **argv)
                 video_upload(&video, ta, 256 + 2 * ta_ext, pce.vdc.fb_h, PCE_FB_MAX_W, ta_ext);
                 video.src_wide_full = ta_ext;
             } else {
-                /* Video > Smooth doors (doors.h) */
-                static Doors doors;
-                DoorPic pic = {fb + cut, pce.vdc.fb_w - 2 * cut, pce.vdc.fb_h, have - cut};
-                pic = ran_frame ? doors_frame(&doors, pic, game_playing(&pce), set.smooth_doors && !test_mode)
-                                : doors_again(&doors, pic);
-                video_upload(&video, pic.px, pic.w, pic.h, PCE_FB_MAX_W, pic.wide);
+                video_upload(&video, fb + cut, pce.vdc.fb_w - 2 * cut, pce.vdc.fb_h, PCE_FB_MAX_W, have - cut);
                 video.src_wide_full = have;
             }
         }
@@ -1699,7 +1681,7 @@ int main(int argc, char **argv)
              * them: Up and Attack (Up kept from the game) whips upward; Attack kept held hangs
              * the whip, and forward on the d-pad swings it ahead. */
             if (pce.wram[RONDO_CHARACTER] == 0) {
-                MoveOptions on = {true, true};
+                MoveOptions on = {true, true, false};
                 move_opts = on;
                 moves_reset(&moves);
                 int up_frames = 0, up_box = -999, limp_frames = 0, limp_ahead = -999, up_seen = 0;

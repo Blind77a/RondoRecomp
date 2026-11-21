@@ -102,6 +102,14 @@ uint8_t moves_pad(Moves *m, const Pce *p, const MoveOptions *o, uint8_t pad, boo
     /* while the whip hangs the d-pad swings it: the game, with Richter in his strike's last
      * frame, would take a direction as the end of the attack */
     if (m->limp && attack_held) pad &= (uint8_t)~(PAD_UP | PAD_DOWN | PAD_LEFT | PAD_RIGHT);
+    /* Sticky stairs: the game catches a stair in a jump only with Up held; while coming down
+     * in a jump or a fall (not on stairs, not attacking: Up and Attack is the sub-weapon,
+     * and not Down) Up is held for the player */
+    if (o->stair_catch && game_playing(p) && !attack_held && !(pad & (PAD_DOWN | PAD_II))) {
+        uint8_t st = p->wram[OBJ_STATE];
+        int16_t vy = (int16_t)(p->wram[OBJ_VY_HI] << 8 | p->wram[OBJ_VY_LO]);
+        if (vy > 0 && st != 0x04 && st != 0x05 && st != RICHTER_JUMP_ATTACK) pad |= PAD_UP;
+    }
     return pad;
 }
 

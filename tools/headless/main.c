@@ -16,7 +16,6 @@
 #include "../frontend/wide.h"
 #include "../frontend/titleart.h"
 #include "../frontend/dedither.h"
-#include "../frontend/doors.h"
 #include "recomp/recomp.h"
 #include "../recomp/capture_script.h"
 #include "util/png.h"
@@ -217,10 +216,8 @@ int main(int argc, char **argv)
     int wide = 0;   /* --wide N: widescreen extension in pixels per side (42 = 16:9 at 4:3, 70 square) */
     bool wide_edges = false;   /* --wide-edges: Video > Level ends */
     bool wide_menus = false;   /* --wide-menus: Video > Wide menus */
+    bool no_room_sides = false, near_spawns = false;
     long wide_off_at = 0;   /* --wide-off-at FRAME: widescreen off from then (4:3 from a widened save) */
-    bool smooth_doors = false;   /* --smooth-doors: Video > Smooth doors, in the shots */
-    static Doors doors;
-    DoorPic door_pic = {0};
     static TitleArt title_art;   /* --title-art FILE: 396 x 228 ARGB, raw (titleart.h): shots of the title with it */
     int last_shift = 0;
     long wrep_at[8]; /* --wide-report FRAME: which widescreen game changes are in */
@@ -287,6 +284,7 @@ int main(int argc, char **argv)
             const char *c = argv[++i];
             move_opts.eight_way = strstr(c, "eight") != NULL;
             move_opts.limp_whip = strstr(c, "limp") != NULL;
+            move_opts.stair_catch = strstr(c, "stairs") != NULL;
         }
         else if (!strcmp(argv[i], "--ram-trace") && i + 1 < argc) ram_trace = fopen(argv[++i], "wb");
         else if (!strcmp(argv[i], "--write-watch") && i + 1 < argc) {
@@ -305,8 +303,9 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--wide") && i + 1 < argc) wide = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--wide-edges")) wide_edges = true;   /* Video > Level ends */
         else if (!strcmp(argv[i], "--wide-menus")) wide_menus = true;   /* Video > Wide menus */
+        else if (!strcmp(argv[i], "--no-room-sides")) no_room_sides = true;   /* Video > Room sides off */
+        else if (!strcmp(argv[i], "--near-spawns")) near_spawns = true;   /* Video > Spawn distance: Near */
         else if (!strcmp(argv[i], "--wide-off-at") && i + 1 < argc) wide_off_at = atol(argv[++i]);
-        else if (!strcmp(argv[i], "--smooth-doors")) smooth_doors = true;   /* Video > Smooth doors (shots) */
         else if (!strcmp(argv[i], "--title-art") && i + 1 < argc) {
             static uint32_t tpx[TITLEART_W * TITLEART_FILE_H];
             FILE *tf = fopen(argv[++i], "rb");
@@ -423,6 +422,8 @@ int main(int argc, char **argv)
     static Wide wd;
     wd.want = wide > WIDE_MAX ? WIDE_MAX : wide;
     wd.edges = wide_edges;
+    wd.room_sides = wide_edges && !no_room_sides;
+    wd.near_spawns = near_spawns;
     wd.menus = wide_menus;
     for (int i = 0; i < n_ww; i++) ww_last[i] = pce.wram[ww_addr[i]];
     memcpy(pw_last, pce.vce.pal, sizeof pw_last);
@@ -561,10 +562,6 @@ int main(int argc, char **argv)
         for (int i = 0; i < n_save_at; i++)
             if (save_at[i].frame == f + 1 && pce_state_save(&pce, save_at[i].path, 0, err, sizeof err))
                 printf("state saved at frame %ld: %s\n", f + 1, save_at[i].path);
-        if (smooth_doors) {
-            DoorPic in = {pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, pce.vdc.fb_wide};
-            door_pic = doors_frame(&doors, in, game_playing(&pce), true);
-        }
         if ((shot_every > 0 && (f + 1) % shot_every == 0) || f + 1 == start_frame + frames) {
             char path[512];
             snprintf(path, sizeof path, "%s/frame_%05ld.png", out, f + 1);
@@ -572,10 +569,6 @@ int main(int argc, char **argv)
             if (dedither_shots) dedither(pce.vdc.fb, dd, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
             const uint32_t *shot = dedither_shots ? dd : pce.vdc.fb;
             int shot_w = pce.vdc.fb_w;
-            if (smooth_doors) {
-                shot = door_pic.px;
-                shot_w = door_pic.w;
-            }
             static uint32_t ta[PCE_FB_MAX_W * PCE_FB_MAX_H];
             int fw = pce.vdc.fb_wide;
             if (title_art.loaded && pce.vdc.fb_w - 2 * fw == 256 &&

@@ -22,6 +22,8 @@ typedef struct Settings {
     bool wide_edges;       /* widescreen at a level's end: the picture moves over instead of
                             * showing black past its wall (wide.h; on by default) */
     bool wide_menus;       /* widescreen on the title and file menus too (wide.h; on by default) */
+    bool near_spawns;      /* with widescreen, objects made 64 px out as in 4:3 (wide.h; off by default) */
+    bool room_sides;       /* with widescreen, rooms kept 4:3 mirrored beside the picture (wide.h; on by default) */
     bool title_art;        /* with widescreen, the player's title_sides.png beside the title
                             * screen (titleart.h; on by default, used only if the file is there) */
     int aspect;            /* ASPECT_* */
@@ -31,10 +33,6 @@ typedef struct Settings {
     int effect_strength;   /* STRENGTH_* */
     int sides;             /* SIDES_*: what fills a wide screen beside the picture */
     bool smooth_fades;     /* the game's fades blended in 24-bit colour (video.h; off by default) */
-    bool smooth_doors;     /* past a door, the next part of the level faded in instead of
-                            * appearing at once (doors.h; on by default) */
-    bool fast_doors;       /* the walk into black past a door run 4x, unseen and unheard
-                            * (doors.h; off by default; not in hardcore) */
     bool smooth_dither;    /* the game's dithering drawn as the colour it stands for (dedither.h; off by default) */
     /* gameplay */
     int skip;              /* SKIP_*: story cinematics */
@@ -43,6 +41,7 @@ typedef struct Settings {
     bool start_screen;     /* show the start screen before the game (rondo.exe --play skips it once) */
     bool eight_way;        /* Richter's whip and Maria's doves in 8 directions (moves.h) */
     bool limp_whip;        /* Richter's whip hangs while Attack is held (moves.h) */
+    bool sticky_stairs;    /* jumps land on stairs without Up held (moves.h; off by default) */
     bool run;              /* the Run control (hold LB) runs, as in Symphony of the Night (game.h) */
     int slot;              /* save-state slot 1-9 */
     /* cheats */

@@ -36,7 +36,6 @@ set(FRONTEND_SOURCES
   tools/frontend/wide.c
   tools/frontend/dedither.c
   tools/frontend/titleart.c
-  tools/frontend/doors.c
   tools/frontend/input.c
   tools/frontend/binds.c
   tools/frontend/menu.c

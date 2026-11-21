@@ -26,7 +26,7 @@ typedef struct Patch {
  * sprites are built, how far out objects spawn and start moving, and where a room's first
  * drawing starts. */
 enum { VAR_NONE, VAR_SPRITE_RIGHT, VAR_SPRITE_LEFT, VAR_ECHO_RIGHT, VAR_SPAWN_RIGHT, VAR_SPAWN_LEFT,
-       VAR_MOVE_RIGHT, VAR_MOVE_LEFT, VAR_ROOM_START, VAR_SWEEP_RIGHT, VAR_COUNT };
+       VAR_MOVE_RIGHT, VAR_MOVE_LEFT, VAR_ROOM_START, VAR_SWEEP_RIGHT, VAR_SWEEP_LEFT, VAR_COUNT };
 static uint8_t var_value[VAR_COUNT];   /* 0 = the template's byte */
 
 static const uint8_t RTS_FILLER[96] = {
@@ -125,6 +125,53 @@ static const Patch patches[] = {
      * (Stage 3's skeleton room left the hero behind the background: the object that puts
      * him back in front was one of them). The sweep goes out to the spawn line. */
     {"room start makes objects out to the spawn line", 0x69, 0x1D61, 2, {0xA9, 0x41}, {0xA9, 0x49}, VAR_SWEEP_RIGHT, 1},
+    /* ... and to the left, which the game sweeps 64 px ($41 steps): objects between that and
+     * the spawn line to the left were never made either (Stage 3's middle chain, which comes
+     * back with its ball, did not after the hero climbed back up to it). */
+    {"room start makes objects out to the left spawn line", 0x69, 0x1D86, 2, {0xA9, 0x41}, {0xA9, 0x49}, VAR_SWEEP_LEFT, 1},
+    /* The spawn list holds events as well as objects (type 6: a routine run as the camera
+     * comes to it). The sweep above made events between $140 and the spawn line happen as
+     * the room started, which the game does only when the camera gets there: one, in
+     * Stage 2's behemoth chase, set the flag ($92) that has the behemoth remove itself as it
+     * appears, so it never broke through the wall. While sweeping (the game's own $2744 is
+     * 1), events past $140 ahead or 64 px behind are left out, as the game's sweep has them. */
+    {"events past $140 left out of the sweep", 0x69, 0x1FDA, 4, {0xA5, 0x08, 0x0A, 0xA8}, {0x20, 0xA0, 0xFF, 0xEA}},
+    {"room start sweep: events as the game has them", 0x00, 0x1F90, 75, {0},
+     {0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60,
+      0xAD, 0x44, 0x27,         /* FFA0 entry: LDA $2744  1 while sweeping        */
+      0xF0, 0x2D,               /* FFA3 BEQ go       not sweeping                */
+      0xA5, 0x08,               /* FFA5 LDA <$08     the entry's type            */
+      0xC9, 0x06,               /* FFA7 CMP #6                                   */
+      0xD0, 0x27,               /* FFA9 BNE go       not an event                */
+      0x38,                     /* FFAB SEC                                      */
+      0xA5, 0x12,               /* FFAC LDA <$12     its X - the camera's        */
+      0xED, 0x08, 0x3E,         /* FFAE SBC $3E08                                */
+      0x48,                     /* FFB1 PHA                                      */
+      0xA5, 0x13,               /* FFB2 LDA <$13                                 */
+      0xED, 0x96, 0x3E,         /* FFB4 SBC $3E96                                */
+      0xF0, 0x18,               /* FFB7 BEQ goP      0..255 ahead                */
+      0xC9, 0x01,               /* FFB9 CMP #1                                   */
+      0xF0, 0x06,               /* FFBB BEQ one                                  */
+      0xC9, 0xFF,               /* FFBD CMP #$FF                                 */
+      0xF0, 0x09,               /* FFBF BEQ minus                                */
+      0x80, 0x14,               /* FFC1 BRA skipP    further either way          */
+      0x68,                     /* FFC3 one: PLA                                 */
+      0xC9, 0x41,               /* FFC4 CMP #$41                                 */
+      0x90, 0x0A,               /* FFC6 BCC go       up to $140 ahead            */
+      0x80, 0x0E,               /* FFC8 BRA skip                                 */
+      0x68,                     /* FFCA minus: PLA                               */
+      0xC9, 0xC0,               /* FFCB CMP #$C0                                 */
+      0xB0, 0x03,               /* FFCD BCS go       up to 64 behind             */
+      0x80, 0x07,               /* FFCF BRA skip                                 */
+      0x68,                     /* FFD1 goP: PLA                                 */
+      0xA5, 0x08,               /* FFD2 go: LDA <$08 (as at 69:5FDA)             */
+      0x0A,                     /* FFD4 ASL                                      */
+      0xA8,                     /* FFD5 TAY                                      */
+      0x60,                     /* FFD6 RTS                                      */
+      0x68,                     /* FFD7 skipP: PLA                               */
+      0x68,                     /* FFD8 skip: PLA    (our return address:        */
+      0x68,                     /* FFD9 PLA           the entry is left)         */
+      0x60}},                   /* FFDA RTS                                      */
 
     /* ---- drawing: follows each frame's choice of wide or 4:3 (sprites past the 256
      * pixels would only take up the 64 hardware sprites in a 4:3 picture) ---- */
@@ -264,15 +311,61 @@ static const Patch patches[] = {
       0x68,                     /* keep: PLA         */
       0x80, 0xFA,               /* BRA go            */
       0x4C, 0x8C, 0x81}},       /* drop: JMP $818C   */
+
+    /* Hits: the game tests its weapons (and the hero) against the other objects in 8-bit
+     * screen X (in Stage 1, 6B:9413 builds the weapons' boxes, 6B:9466 each object's),
+     * leaving out anything whose box is not within the 256 pixels: a skeleton in the wider
+     * picture could not be hit. Both are worked out through this code of ours, which first
+     * takes HIT_BIAS (written before every frame, wide_frame) off X: the 256 pixels tested
+     * are moved to where the hero faces in the wider picture; the spot a hit spark is shown
+     * at gets it back. The game's code is in each stage's own bank $6B, at a different place
+     * in each: found by its bytes and sent here by hit_patches, not by this table. */
+    {"hit boxes moved by HIT_BIAS", 0x00, 0x1F40, 79, {0},
+     {0x18,                     /* FF40 weapon: CLC                              */
+      0x7D, 0xC8, 0x2B,         /* FF41 ADC $2BC8,X   X low (as at 6B:9434)      */
+      0x9D, 0x10, 0x27,         /* FF44 STA $2710,X                              */
+      0xBD, 0x70, 0x2B,         /* FF47 LDA $2B70,X                              */
+      0x65, 0x00,               /* FF4A ADC <$00                                 */
+      0x9D, 0x30, 0x27,         /* FF4C STA $2730,X   X high                     */
+      0x38,                     /* FF4F SEC                                      */
+      0xBD, 0x10, 0x27,         /* FF50 LDA $2710,X                              */
+      0xED, 0xD8, 0xFE,         /* FF53 SBC $FED8     HIT_BIAS low               */
+      0x9D, 0x10, 0x27,         /* FF56 STA $2710,X                              */
+      0xBD, 0x30, 0x27,         /* FF59 LDA $2730,X                              */
+      0xED, 0xD9, 0xFE,         /* FF5C SBC $FED9     ... high                   */
+      0x9D, 0x30, 0x27,         /* FF5F STA $2730,X                              */
+      0x60,                     /* FF62 RTS                                      */
+      0x18,                     /* FF63 object: CLC   (as at 6B:9495)            */
+      0x7D, 0xC8, 0x2B,         /* FF64 ADC $2BC8,X                              */
+      0x8D, 0xFF, 0x26,         /* FF67 STA $26FF                                */
+      0xBD, 0x70, 0x2B,         /* FF6A LDA $2B70,X                              */
+      0x65, 0x00,               /* FF6D ADC <$00                                 */
+      0x48,                     /* FF6F PHA                                      */
+      0x38,                     /* FF70 SEC                                      */
+      0xAD, 0xFF, 0x26,         /* FF71 LDA $26FF                                */
+      0xED, 0xD8, 0xFE,         /* FF74 SBC $FED8                                */
+      0x8D, 0xFF, 0x26,         /* FF77 STA $26FF                                */
+      0x68,                     /* FF7A PLA                                      */
+      0xED, 0xD9, 0xFE,         /* FF7B SBC $FED9     Z: within the 256 (BNE)    */
+      0x60,                     /* FF7E RTS                                      */
+      0xAD, 0xFF, 0x26,         /* FF7F spark: LDA $26FF                         */
+      0x18,                     /* FF82 CLC                                      */
+      0x6D, 0xD8, 0xFE,         /* FF83 ADC $FED8     back on the screen         */
+      0x60,                     /* FF86 RTS                                      */
+      0xAD, 0x13, 0x27,         /* FF87 spark: LDA $2713                         */
+      0x18,                     /* FF8A CLC                                      */
+      0x6D, 0xD8, 0xFE,         /* FF8B ADC $FED8                                */
+      0x60}},                   /* FF8E RTS                                      */
 };
 #pragma GCC diagnostic pop
 #define PARKED_TABLE 0x1E80   /* bank $00 offset ($FE80): a byte per object slot, 1 = parked */
+#define HIT_BIAS 0x1ED8       /* bank $00 offset ($FED8): 16-bit screen X the hit test's 256 pixels start at */
 #define ECHO_TABLE 0x1CC0     /* bank $00 offset ($FCC0): a byte per object slot, 1 = echoed */
 #define N_PATCHES (int)(sizeof patches / sizeof patches[0])
 #define N_WORLD 8          /* patches[0..7] change how the room's background is streamed into
                             * the map (put in or out as a room starts) */
 #define WORLD_PATCHES ((1u << N_WORLD) - 1)
-#define OBJECT_PATCHES (((1u << 5) - 1) << N_WORLD)   /* patches[8..12]: objects further out */
+#define OBJECT_PATCHES (((1u << 8) - 1) << N_WORLD)   /* patches[8..15]: objects further out */
 #define DRAW_PATCHES (((1u << N_PATCHES) - 1) & ~WORLD_PATCHES & ~OBJECT_PATCHES)   /* the rest */
 /* objects reach further out only for a picture wider than the 64 px they already reach */
 #define OBJECT_REACH 64
@@ -313,6 +406,19 @@ static void undo_old_patches(Pce *p)
         memcpy(c, t->wide, t->len);
         for (int i = t->len; i < 64; i++) c[i] = 0x60;
         p->cpu.page_gen[t->bank]++;
+    }
+    /* ... and the room start sweep's event check at $FFA0 (earlier: 52 or 68 bytes, the
+     * right side only), in use while the spawner's call to it is in: replaced in place */
+    for (int i = 0; i < N_PATCHES; i++) {
+        const Patch *q = &patches[i];
+        if (q->bank != 0x00 || q->off != 0x1F90) continue;
+        uint8_t *e = at(p, q);
+        if (e && memcmp(e, q->wide, q->len) &&
+            ((e[0x10] == 0xAD && e[0x11] == 0x44 && e[0x12] == 0x27 && e[0x14] == 0x26) ||
+             (e[0] == 0xA9 && e[2] == 0x8D && e[3] == 0xDA && e[4] == 0xFE))) {
+            memcpy(e, q->wide, q->len);
+            p->cpu.page_gen[q->bank]++;
+        }
     }
 }
 
@@ -370,6 +476,55 @@ static void set_patches(Pce *p, uint32_t mask, bool on)
     }
 }
 
+/* The hit test's four places in bank $6B (see "hit boxes moved by HIT_BIAS"): each stage
+ * has its own copy of the bank, the code at a different offset, so they are found by their
+ * bytes (each unique in the bank). Put in (on) or taken out, while the code they call is in. */
+static const struct { uint8_t len; uint8_t orig[15], wide[15]; } HIT_SITES[4] = {
+    {15, {0x18, 0x7D, 0xC8, 0x2B, 0x9D, 0x10, 0x27, 0xBD, 0x70, 0x2B, 0x65, 0x00, 0x9D, 0x30, 0x27},
+     {0x20, 0x40, 0xFF, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA}},
+    /* (the object's: up to its BNE, which stays) */
+    {12, {0x18, 0x7D, 0xC8, 0x2B, 0x8D, 0xFF, 0x26, 0xBD, 0x70, 0x2B, 0x65, 0x00},
+     {0x20, 0x63, 0xFF, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA}},
+    {6, {0xAD, 0xFF, 0x26, 0x8D, 0xEB, 0x3B}, {0x20, 0x7F, 0xFF, 0x8D, 0xEB, 0x3B}},
+    {6, {0xAD, 0x13, 0x27, 0x8D, 0xED, 0x3B}, {0x20, 0x87, 0xFF, 0x8D, 0xED, 0x3B}},
+};
+static int hit_at[4] = {-1, -1, -1, -1};   /* where each was last found */
+
+static int hit_find(const uint8_t *page, const uint8_t *bytes, int len, int hint)
+{
+    if (hint >= 0 && hint + len <= 0x2000 && !memcmp(page + hint, bytes, len)) return hint;
+    for (int i = 0; i + len <= 0x2000; i++)
+        if (page[i] == bytes[0] && !memcmp(page + i, bytes, len)) return i;
+    return -1;
+}
+
+static void hit_patches(Pce *p, bool on)
+{
+    uint8_t *page = p->page[0x6B];
+    if (!page) return;
+    const Patch *code = NULL;
+    for (int i = 0; i < N_PATCHES; i++)
+        if (patches[i].bank == 0x00 && patches[i].off == 0x1F40) code = &patches[i];
+    const uint8_t *c = code && p->page[0x00] ? p->page[0x00] + code->off : NULL;
+    if (on && (!c || !is_in(c, code))) on = false;   /* (nothing to call) */
+    bool changed = false;
+    for (int k = 0; k < 4; k++) {
+        const uint8_t *from = on ? HIT_SITES[k].orig : HIT_SITES[k].wide;
+        const uint8_t *to = on ? HIT_SITES[k].wide : HIT_SITES[k].orig;
+        int len = HIT_SITES[k].len;
+        if (hit_find(page, to, len, hit_at[k]) >= 0) {   /* already as wanted */
+            hit_at[k] = hit_find(page, to, len, hit_at[k]);
+            continue;
+        }
+        int at_ = hit_find(page, from, len, hit_at[k]);
+        if (at_ < 0) continue;
+        memcpy(page + at_, to, len);
+        hit_at[k] = at_;
+        changed = true;
+    }
+    if (changed) p->cpu.page_gen[0x6B]++;
+}
+
 /* Patches in place get this frame's values (var_value). */
 static void update_vars(Pce *p)
 {
@@ -407,6 +562,7 @@ int wide_extent(double window_aspect, double picture_aspect)
 #define ECHO_STILL_FRAMES 8  /* an echoed object has moved within this many frames */
 #define OBJ_XL 0x0BC8
 #define OBJ_XH 0x0B70
+#define OBJ_FACING 0x0AC0    /* 0 = facing right (the hit test turns boxes round by it) */
 #define OBJ_TYPE 0x0A10
 #define HUD_SLOT 0x57        /* the HUD (health, hearts, score): type 5, screen X 8 */
 #define SUBWEAPON_SLOT 0x56  /* the sub-weapon icon hanging from the HUD: type 3, screen X 28 */
@@ -544,6 +700,7 @@ static bool scenery_rows[64];   /* map rows seen scrolled apart from the playfie
 static uint16_t keep_prev[64 * KEEP_W];   /* the map last frame */
 static uint16_t keep_val[64 * KEEP_W];
 static int16_t keep_x[64 * KEEP_W], keep_y[64 * KEEP_W];   /* level column, row; -1 none */
+static int16_t keep_cx[64 * KEEP_W], keep_cy[64 * KEEP_W]; /* the camera then (kept only near it) */
 static int keep_mw, keep_mh;
 static bool keep_on;
 
@@ -590,19 +747,38 @@ static void keep_tiles(Pce *p, bool on)
                 col_n[c]++;
                 row_n[row]++;
             }
+    /* most of the map at once (a room drawn again, a save state loaded): start over */
+    int total = 0;
+    for (int c = 0; c < mw; c++) total += col_n[c];
+    if (total > mw * mh / 4) {
+        keep_on = false;
+        keep_tiles(p, on);
+        return;
+    }
     for (int c = 0; c < mw; c++) {
         if (!col_n[c]) continue;
         int lx = keep_pos(c, cx, mw * 8, keep_dir < 0 ? 192 : 64);
+        /* (the game draws columns and rows in as they come, off its screen; what it draws
+         * again on it, as a drawbridge laid down, is its own) */
+        bool off_x = lx * 8 + 8 <= cx - 48 || lx * 8 >= cx + 256 + 48;
         for (int row = 0; row < mh; row++) {
             int i = row * mw + c;
             int ly = keep_pos(row, cy, mh * 8, 128);
+            bool off = off_x || ly * 8 + 8 <= cy - 48 || ly * 8 >= cy + 224 + 48;
             if (col_n[c] >= 12 || row_n[row] >= 12) {
                 /* a column (row) drawn: objects' tiles here put back */
-                if (keep_x[i] == lx && keep_y[i] == ly && d->vram[i] != keep_val[i]) d->vram[i] = keep_val[i];
+                /* (only while the camera is still near where it was: a map 512 px tall or
+                 * wide holds the same cell for places that far apart) */
+                bool near = wrap(cx - keep_cx[i]) >= -192 && wrap(cx - keep_cx[i]) <= 192 &&
+                            wrap(cy - keep_cy[i]) >= -192 && wrap(cy - keep_cy[i]) <= 192;
+                if (off && near && keep_x[i] == lx && keep_y[i] == ly && d->vram[i] != keep_val[i])
+                    d->vram[i] = keep_val[i];
             } else if (d->vram[i] != keep_prev[i]) {
                 keep_val[i] = d->vram[i];
                 keep_x[i] = (int16_t)lx;
                 keep_y[i] = (int16_t)ly;
+                keep_cx[i] = (int16_t)cx;
+                keep_cy[i] = (int16_t)cy;
             }
             keep_prev[i] = d->vram[i];
         }
@@ -612,6 +788,28 @@ static void keep_tiles(Pce *p, bool on)
 static int cams[CAM_HISTORY] = {-1, -1, -1, -1};   /* the camera over the last frames (scenery_fill) */
 
 static int edge_shift(int left, int right, int ext);
+
+/* Level ends: the picture's shift for camera X cam (walls left / right as room_walls has
+ * them). Past a door the game scrolls its camera on beyond the room's limits into the next
+ * part: the shift it had at the limit (all the extra width behind, at the room's end) eases
+ * back to 0 as the camera goes on (a pixel for a pixel), so it is 0 by the time the next
+ * part's limits come in (with none, the picture jumped by the whole extra width then).
+ * keep: the shift is this frame's (kept as the one at the limit). */
+static int picture_shift(Wide *w, const uint8_t *r, int cam, int left, int right, int ext, bool keep)
+{
+    if (!ext || !w->edges) return 0;
+    if (!room_scrolls(r)) return edge_shift(left, right, ext);   /* (a boss's lock: walls kept) */
+    int lo = limit_lo(r), hi = limit_hi(r), beyond = 0;
+    if (wrap(cam - hi) > 0) beyond = wrap(cam - hi);
+    else if (wrap(cam - lo) < 0) beyond = -wrap(cam - lo);
+    if (beyond > 0) {
+        int b = w->inside_shift;
+        return b < 0 ? (b + beyond < 0 ? b + beyond : 0) : (b - beyond > 0 ? b - beyond : 0);
+    }
+    int shift = w->calm ? 0 : edge_shift(left, right, ext);
+    if (keep) w->inside_shift = shift;
+    return shift;
+}
 
 /* The HUD's sprites are built during a frame (72:8000) and shown with the next one, whose
  * picture is shifted (Level ends) for the camera as it stands once this frame has moved it:
@@ -625,7 +823,7 @@ static void hud_at_build(Wide *w, Pce *p)
     int cam = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL];
     int left, right;
     room_walls(r, cam, &left, &right);
-    place_hud_left(p, ext - (w->calm ? 0 : edge_shift(left, right, ext)));
+    place_hud_left(p, ext - picture_shift(w, r, cam, left, right, ext, false));
     w->build_cam = cam;   /* (the picture follows it too: wide_frame) */
     w->build_seen = true;
 }
@@ -1014,14 +1212,17 @@ void wide_frame(Wide *w, Pce *p)
     /* a save state made in a widened room holds the object changes (their varying bytes not
      * the game's own: theirs are 0x40/0xC0): taken as in, so they follow this frame's values */
     if (!objects_on && s == RONDO_PLAYING) {
+        /* (one made by an earlier build may lack some: they are put in with the rest) */
         bool all = true, moved = false;
         for (int i = 0; i < N_PATCHES; i++) {
             if (!(OBJECT_PATCHES & 1u << i)) continue;
-            const uint8_t *m = at(p, &patches[i]);
-            all &= m && is_in(m, &patches[i]);
-            moved |= m && m[patches[i].var_at] != orig_of(&patches[i])[patches[i].var_at];
+            const Patch *q = &patches[i];
+            const uint8_t *m = at(p, q);
+            bool in = m && is_in(m, q);
+            all &= in || (m && !memcmp(m, orig_of(q), q->len));
+            if (q->var) moved |= in && m[q->var_at] != orig_of(q)[q->var_at];
         }
-        if (all && moved) objects_on = true;
+        if (all && moved) set_patches(p, OBJECT_PATCHES, true);
     }
     uint32_t in = patches_in(p);
     w->patched = (in & WORLD_PATCHES) == WORLD_PATCHES;
@@ -1078,11 +1279,15 @@ void wide_frame(Wide *w, Pce *p)
     bool show = want && s == RONDO_PLAYING && mw >= 1 &&
                 (scrolls ? w->patched : (!w->patched && w->scenery_moving >= 45));
     /* sprites past the 256 pixels are built only while the picture is wide */
+    if (!show) hit_patches(p, false);   /* (out before the code they call) */
     set_patches(p, DRAW_PATCHES, show);
     if (show && (patches_in(p) & DRAW_PATCHES) != DRAW_PATCHES) {
+        hit_patches(p, false);
         set_patches(p, DRAW_PATCHES, false);
         show = false;
     }
+    /* the hit test's places, found in this stage's bank $6B (none found: hits as in 4:3) */
+    hit_patches(p, show);
     /* menus (title, file select): wide once the sides have filled for a few frames in a
      * row; then kept, with the last sides that filled, through a while they do not (a page
      * of the menu sliding over: its frames reach the edges), so it does not flick back */
@@ -1101,9 +1306,9 @@ void wide_frame(Wide *w, Pce *p)
     } else {
         w->menu_good = w->menu_bad = 0;
     }
-    /* a room kept 4:3 in play: mirrored beside it, fading out (room_sides; with Level
-     * ends) */
-    bool walls = !show && !menu && want && w->edges && s == RONDO_PLAYING && mw >= 1 && room_sides(p);
+    /* a room kept 4:3 in play: mirrored beside it, fading out (room_sides; Video > Room
+     * sides) */
+    bool walls = !show && !menu && want && w->room_sides && s == RONDO_PLAYING && mw >= 1 && room_sides(p);
     vdc_set_side_tiles(menu || walls ? side_l : NULL, menu || walls ? side_r : NULL);
     vdc_set_side_fade(walls);
     /* a menu sliding over to another page (its scroll moved in the last few frames): the
@@ -1166,6 +1371,7 @@ void wide_frame(Wide *w, Pce *p)
      * their drops about 128 px either side). A banner or a generator does not move. */
     uint8_t *table = p->page[0x00] ? p->page[0x00] + PARKED_TABLE : NULL;
     uint8_t *echo = p->page[0x00] ? p->page[0x00] + ECHO_TABLE : NULL;
+
     if (ext && s == RONDO_PLAYING) {
         int cam_now = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL], st = wrap(cam_now - rows_cam);
         rows_cam = cam_now;
@@ -1232,10 +1438,42 @@ void wide_frame(Wide *w, Pce *p)
         w->lim_seen = true;
     }
     if (w->calm && (wrap(cam - w->calm_cam) >= 128 || wrap(cam - w->calm_cam) <= -128)) w->calm = false;
-    int shift = 0;
-    if (ext && scrolls && w->edges && !w->calm) shift = edge_shift(left, right, ext);
+    int shift = scrolls ? picture_shift(w, r, drawn, left, right, ext, true) : 0;
+    if (!scrolls) w->inside_shift = 0;
     vdc_set_wide_shift(shift);
     w->shift = shift;
+
+    /* the hit test's 256 pixels (HIT_BIAS): the game's own screen, moved towards the side
+     * the hero faces only as far as objects there need (4:3: never) */
+    {
+        uint8_t *hb = p->page[0x00] ? p->page[0x00] + HIT_BIAS : NULL;
+        int bias = 0;
+        if (show && ext && s == RONDO_PLAYING) {
+            int lo = shift - ext, hi = ext + shift;   /* the picture: screen X lo .. hi + 256 */
+            int hx = (int16_t)(r[OBJ_XL] | r[OBJ_XH] << 8);
+            bool left = r[OBJ_FACING] != 0;
+            /* the furthest object past the 256 pixels on the side faced (weapons included;
+             * not those fixed to the screen), with 16 px for its box */
+            int need = 0;
+            for (int i = 0; i < OBJ_SLOTS; i++) {
+                if (!r[OBJ_KIND + i] || (r[OBJ_FLAGS + i] & 1)) continue;
+                int x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8);
+                if (!left && x > 239 && x < hi + 256 + 16 && x + 16 - 255 > need) need = x + 16 - 255;
+                if (left && x < 16 && x > lo - 16 && x - 16 < need) need = x - 16;
+            }
+            /* ... as far as that needs, keeping 64 px behind the hero (an enemy's touch) */
+            if (!left) bias = need < hx - 64 ? need : hx - 64;
+            else bias = need > hx + 64 - 256 ? need : hx + 64 - 256;
+            if (!left && bias < 0) bias = 0;
+            if (left && bias > 0) bias = 0;
+            if (bias < lo) bias = lo;
+            if (bias > hi) bias = hi;
+        }
+        if (hb) {
+            hb[0] = (uint8_t)bias;
+            hb[1] = (uint8_t)(bias >> 8);
+        }
+    }
 
     /* Enemies some rooms send in from just past the screen's edges, whatever the camera
      * does (the castle hall's ghouls at X -24 / 280, its kind-31 creatures at 272): put at
@@ -1245,12 +1483,23 @@ void wide_frame(Wide *w, Pce *p)
      * remove themselves further out: kind 31 from 86 px). Only at those exact places (16, 24
      * or 32 px past the edge; things thrown from off screen come out where the thrower is),
      * and not objects fixed to the screen. */
+    /* (objects a room's start makes all at once, from its list, are where the level has
+     * them: one may stand at -16 by chance, as Stage 3's chains do, and was moved onto the
+     * next. Made three or more in a frame: not moved.) */
+    static bool batch[OBJ_SLOTS];
+    {
+        int born = 0;
+        for (int i = 0; i < OBJ_SLOTS; i++) born += r[OBJ_KIND + i] && !w->obj_kind[i];
+        for (int i = 0; i < OBJ_SLOTS; i++)
+            if (r[OBJ_KIND + i] && !w->obj_kind[i]) batch[i] = born >= 3;
+            else if (!r[OBJ_KIND + i]) batch[i] = false;
+    }
     for (int i = 0; i < OBJ_SLOTS; i++) {
         uint8_t kind = r[OBJ_KIND + i];
         bool first = kind && r[OBJ_FRAME + i] && !(kind == w->obj_kind[i] && w->obj_shown[i]);
         w->obj_kind[i] = kind;
         w->obj_shown[i] = kind && r[OBJ_FRAME + i];
-        if (!first || !ext || s != RONDO_PLAYING || !scrolls || (r[OBJ_FLAGS + i] & 1) ||
+        if (!first || batch[i] || !ext || s != RONDO_PLAYING || !scrolls || (r[OBJ_FLAGS + i] & 1) ||
             i == HUD_SLOT || i == SUBWEAPON_SLOT)
             continue;
         int x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8), to = x;
@@ -1274,13 +1523,21 @@ void wide_frame(Wide *w, Pce *p)
      * 128 px out) */
     var_value[VAR_SPRITE_RIGHT] = var_value[VAR_ECHO_RIGHT] = (uint8_t)(0x20 + E + (shift > 0 ? shift : 0));
     var_value[VAR_SPRITE_LEFT] = (uint8_t)(0x100 - E - (shift < 0 ? -shift : 0));
-    int base = object_reach(w->want);
+    int base = w->near_spawns ? OBJECT_REACH : object_reach(w->want);   /* (Video > Spawn distance) */
     int reach_r = shift > 0 ? ext + shift + 8 : 0, reach_l = shift < 0 ? ext - shift + 8 : 0;
     int dr = reach_r > base ? (reach_r < 0x78 ? reach_r : 0x78) : base;
     int dl = reach_l > base ? (reach_l < 0x78 ? reach_l : 0x78) : base;
-    var_value[VAR_SPAWN_RIGHT] = var_value[VAR_MOVE_RIGHT] = (uint8_t)dr;
-    var_value[VAR_SPAWN_LEFT] = var_value[VAR_MOVE_LEFT] = (uint8_t)(0x100 - dl);
-    var_value[VAR_SWEEP_RIGHT] = (uint8_t)(dr + 1);   /* (steps: camera + $100 + dr included) */
+    if (w->near_spawns) dr = dl = OBJECT_REACH;
+    var_value[VAR_SPAWN_RIGHT] = (uint8_t)dr;
+    var_value[VAR_SPAWN_LEFT] = (uint8_t)(0x100 - dl);
+    /* ... but start moving where the game's do, 64 px out: the ground objects stand and
+     * walk on is looked up (6B:96E3) in 8 columns of 32 px, the 256 pixels round its
+     * screen, so further out an object took another column's ground (Stage 3's skeleton,
+     * made on a ledge past the screen, fell into the rock). Past 64 px they wait, drawn. */
+    var_value[VAR_MOVE_RIGHT] = 0x40;
+    var_value[VAR_MOVE_LEFT] = 0xC0;
+    var_value[VAR_SWEEP_RIGHT] = (uint8_t)(dr + 1);
+    var_value[VAR_SWEEP_LEFT] = (uint8_t)(dl + 1);   /* (steps: camera + $100 + dr included) */
     update_vars(p);
     if (s == RONDO_PLAYING && (objects_out || w->gen_r || w->gen_l)) {
         /* (new generators come at the game's edge) */
@@ -1302,6 +1559,19 @@ void wide_frame(Wide *w, Pce *p)
     } else if (scrolls) {
         p->vdc.wide_x0 = left + ext - shift;
         p->vdc.wide_x1 = right + ext - shift;
+        /* Black only beside the original 256 pixels, never in them: past a door the game
+         * scrolls its camera beyond the room's limits into the next part, which it shows
+         * there (the black covered it, and the behemoth breaking in after the hero). While
+         * the camera is beyond the limits, nothing is black. */
+        int orig = ext - shift;
+        if (p->vdc.wide_x0 > orig) p->vdc.wide_x0 = orig;
+        if (p->vdc.wide_x1 < orig + 256) p->vdc.wide_x1 = orig + 256;
+        /* (nor while settling past a door: beyond the next part's wall is the part just
+         * left, drawn as the game had it) */
+        if (w->calm || (room_scrolls(r) && (wrap(drawn - limit_lo(r)) < 0 || wrap(drawn - limit_hi(r)) > 0))) {
+            p->vdc.wide_x0 = 0;
+            p->vdc.wide_x1 = 256 + 2 * ext;
+        }
     } else {
         p->vdc.wide_x0 = 0;
         p->vdc.wide_x1 = 256 + 2 * ext;
@@ -1315,6 +1585,7 @@ void wide_frame(Wide *w, Pce *p)
 
 void wide_off(Wide *w, Pce *p)
 {
+    hit_patches(p, false);
     set_patches(p, WORLD_PATCHES | OBJECT_PATCHES | DRAW_PATCHES, false);
     move_generators(w, p, 0x40, 0x40);
     w->gen_r = w->gen_l = 0;
