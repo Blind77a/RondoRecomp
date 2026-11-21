@@ -38,6 +38,8 @@ typedef struct Wide {
     int active;            /* extension drawn (0 = original 4:3 picture) */
     bool patched;          /* every background change is in place */
     int shift;             /* the picture's shift this frame (vdc_set_wide_shift) */
+    int build_cam;         /* the camera as the game last built its sprites (hud_at_build) */
+    bool build_seen;
     int menu_good;         /* frames in a row a menu's sides could be filled (to MENU_FRAMES) */
     int menu_bad;          /* ... and since then could not */
     int menu_bxr, menu_moved;   /* a menu's sideways scroll last frame, frames it has not moved */

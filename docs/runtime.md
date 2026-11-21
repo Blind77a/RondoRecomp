@@ -315,6 +315,12 @@ disc as it goes):
   position, so it scrolls with the band). Gaps between clouds are shorter and left alone; a row less than half drawn
   is no band (Stage 2's first room: an empty bottom row but for a tower, once seen scrolled
   apart, was filled with floor tiles).
+- Level ends follow the camera the game built its sprites with (`hud_at_build`, recorded and
+  used by the next `wide_frame`): the game draws the playfield with that same camera, which is
+  the camera before or after `wide_frame`'s point depending on how long its frames run (a slow
+  frame, as on Stage 2's bridge, moves the camera while the next picture is drawn; on the
+  stairs below it the game is done in time). Worked out from the camera at `wide_frame`, the
+  picture and HUD shook by the camera's step at a room's end.
 - Level ends (Video > Level ends, on by default; `Wide.edges`): within the extension of a
   scrolling room's left or right limit the picture is shifted (`vdc_set_wide_shift`,
   host-side, latched per frame like `fb_wide`; the original 256 then start at
