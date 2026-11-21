@@ -658,12 +658,222 @@ static void walls_of(int lo, int hi, int cam, int *left, int *right)
     }
 }
 
-static int limit_lo(const uint8_t *r) { return r[LIMIT_LEFT] * 256; }
+/* an open arena made walkable (arena_walk): its left limit, which the game cannot hold (its
+ * left limit is a page), or -1 */
+static int walk_lo = -1;
+static int limit_lo(const uint8_t *r) { return walk_lo >= 0 ? walk_lo : r[LIMIT_LEFT] * 256; }
 static int limit_hi(const uint8_t *r) { return r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1]; }
 
 static void room_walls(const uint8_t *r, int cam, int *left, int *right)
 {
     walls_of(limit_lo(r), limit_hi(r), cam, left, right);
+}
+
+/* Boss rooms one screen wide (the camera locked to one screen for the whole room) that have
+ * no wall at their sides: the level carries on beside the arena, and the game draws it there
+ * as the room starts (64 px left of the screen, 96 right; 6F:A94C), as it was when the
+ * camera came in. With Video > Open arenas these are shown wide, as the game draws them
+ * (no other change to the room), instead of kept 4:3. Matched by area ($A2, Richter's and
+ * Maria's alike), room ($83) and the camera's locked X. */
+#define AREA 0xA2
+#define ROOM 0x83
+/* quiet: kinds of object removed while the arena is walkable (arena_walk), things of the
+ * level beside it that the 4:3 fight never brings in because its camera never moves */
+static const struct { uint8_t area, room; uint16_t cam; uint8_t quiet[4]; } ARENAS[] = {
+    /* Stage 3: the giant three-eyed skull, before the bridge. A bat generator ($35, 250 px
+     * left of the arena, with its launchers $36) sends its bats ($34) in at the game's
+     * screen edge once the camera has gone left. */
+    {0x14, 0x00, 0x0300, {0x34, 0x35, 0x36}},
+};
+
+static bool open_arena(const uint8_t *r)
+{
+    int lo = limit_lo(r), hi = limit_hi(r);
+    if (lo != hi) return false;
+    for (size_t i = 0; i < sizeof ARENAS / sizeof ARENAS[0]; i++)
+        if ((r[AREA] & 0xFE) == ARENAS[i].area && r[ROOM] == ARENAS[i].room && lo == ARENAS[i].cam) return true;
+    return false;
+}
+
+/* ---- walkable arenas ------------------------------------------------------------------
+ * An open arena is made as wide to play in as the picture (Video > Open arenas): its camera
+ * limits are widened by the extension each way, and Level ends' shift moves the picture
+ * back as the camera moves, so the arena stands still on the screen while the game's own
+ * 256 pixels follow Richter (the ground under him, hits and the rest work as ever). The
+ * right limit is a page and X ($1EC6/$1EC7) and the game holds it as it is; the left is a
+ * page alone ($1EBE: the camera stops at its X 0). So the left check in Richter's walk
+ * (6A:6971, the camera at the limit or crossing it while he walks left) is sent to code of
+ * ours in bank $00 that does the same against a left limit with an X (WALK_LEFT). */
+#define WALK_CODE 0x1A00   /* bank $00 offset ($FA00): our left check */
+#define WALK_LEFT 0x1EDA   /* bank $00 offset ($FEDA): the left limit's X, then page */
+static const uint8_t WALK_SITE[18] = {   /* 6A:6971: LDA $3E96 / CMP $3EBE / BNE / LDA $3E00 / ORA $3E08 / BNE / BRA */
+    0xAD, 0x96, 0x3E, 0xCD, 0xBE, 0x3E, 0xD0, 0x0A, 0xAD, 0x00, 0x3E, 0x0D, 0x08, 0x3E, 0xD0, 0x09, 0x80, 0xCC};
+static const uint8_t WALK_JUMP[18] = {   /* JMP $FA00 */
+    0x4C, 0x00, 0xFA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA};
+/* (the site's neighbours it jumps to, checked by their first bytes: offset from the site) */
+static const struct { int at; uint8_t len, bytes[6]; } WALK_NEAR[4] = {
+    {-0x22, 5, {0xA5, 0x04, 0x8D, 0x20, 0x2C}},         /* 694F: Richter moves, the camera not */
+    {-0xA8, 5, {0xAD, 0xC8, 0x2B, 0xC9, 0x80}},         /* 68C9: carry = Richter right of centre */
+    {+0x75, 6, {0xAD, 0xD8, 0x2D, 0x8D, 0x7E, 0x3E}},   /* 69E6: the camera moves at his speed */
+    {+0x82, 5, {0xA9, 0x80, 0x8D, 0xC8, 0x2B}},         /* 69F3: he is put at centre, the camera moves */
+};
+#define WALK_CODE_LEN 0x8D
+static int walk_site = -1;   /* where WALK_SITE was last found in bank $6A */
+
+/* our left check at $FA00, jumping back into the walk at the site's neighbours (a = 694F,
+ * b = 68C9, c = 69E6, d = 69F3 as the dump has them) */
+static void walk_code(uint8_t *o, int site)
+{
+    int base = 0x6000 + site;
+    int a = base - 0x22, b = base - 0xA8, c = base + 0x75, d = base + 0x82;
+    const uint8_t t[WALK_CODE_LEN] = {
+        0xAD, 0x00, 0x3E,         /* FA00 LDA $3E00     camera at the limit (sub 0, X, page)? */
+        0xD0, 0x13,               /* FA03 BNE notat                                         */
+        0xAD, 0x08, 0x3E,         /* FA05 LDA $3E08                                         */
+        0xCD, 0xDA, 0xFE,         /* FA08 CMP $FEDA                                         */
+        0xD0, 0x0B,               /* FA0B BNE notat                                         */
+        0xAD, 0x96, 0x3E,         /* FA0D LDA $3E96                                         */
+        0xCD, 0xDB, 0xFE,         /* FA10 CMP $FEDB                                         */
+        0xD0, 0x03,               /* FA13 BNE notat                                         */
+        0x4C, (uint8_t)a, (uint8_t)(a >> 8),   /* FA15 JMP a  Richter moves              */
+        0x20, (uint8_t)b, (uint8_t)(b >> 8),   /* FA18 notat: JSR b  right of centre?    */
+        0xB0, 0x1E,               /* FA1B BCS off                                           */
+        0xAD, 0xD8, 0x2D,         /* FA1D LDA $2DD8     new camera = camera + his speed      */
+        0x18,                     /* FA20 CLC                                               */
+        0x6D, 0x00, 0x3E,         /* FA21 ADC $3E00                                         */
+        0x85, 0x02,               /* FA24 STA $02                                           */
+        0xAD, 0x80, 0x2D,         /* FA26 LDA $2D80                                         */
+        0x6D, 0x08, 0x3E,         /* FA29 ADC $3E08                                         */
+        0x85, 0x03,               /* FA2C STA $03                                           */
+        0xA9, 0xFF,               /* FA2E LDA #$FF                                          */
+        0x6D, 0x96, 0x3E,         /* FA30 ADC $3E96     (its page)                          */
+        0x20, 0x82, 0xFA,         /* FA33 JSR cmp                                           */
+        0x90, 0x1F,               /* FA36 BCC cross                                         */
+        0x4C, (uint8_t)c, (uint8_t)(c >> 8),   /* FA38 JMP c                              */
+        0xA5, 0x00,               /* FA3B off: LDA $00  new camera = camera + his offset    */
+        0x18,                     /* FA3D CLC                                               */
+        0x6D, 0x00, 0x3E,         /* FA3E ADC $3E00                                         */
+        0x85, 0x02,               /* FA41 STA $02                                           */
+        0xA5, 0x01,               /* FA43 LDA $01                                           */
+        0x6D, 0x08, 0x3E,         /* FA45 ADC $3E08                                         */
+        0x85, 0x03,               /* FA48 STA $03                                           */
+        0xA9, 0xFF,               /* FA4A LDA #$FF                                          */
+        0x6D, 0x96, 0x3E,         /* FA4C ADC $3E96                                         */
+        0x20, 0x82, 0xFA,         /* FA4F JSR cmp                                           */
+        0x90, 0x03,               /* FA52 BCC cross                                         */
+        0x4C, (uint8_t)d, (uint8_t)(d >> 8),   /* FA54 JMP d                              */
+        0x62,                     /* FA57 cross: CLA   camera speed = limit - camera        */
+        0x38,                     /* FA58 SEC                                               */
+        0xED, 0x00, 0x3E,         /* FA59 SBC $3E00                                         */
+        0x8D, 0x7E, 0x3E,         /* FA5C STA $3E7E                                         */
+        0xAD, 0xDA, 0xFE,         /* FA5F LDA $FEDA                                         */
+        0xED, 0x08, 0x3E,         /* FA62 SBC $3E08                                         */
+        0x8D, 0x86, 0x3E,         /* FA65 STA $3E86                                         */
+        0xA5, 0x03,               /* FA68 LDA $03      Richter moves the rest: new - limit  */
+        0x38,                     /* FA6A SEC                                               */
+        0xED, 0xDA, 0xFE,         /* FA6B SBC $FEDA                                         */
+        0x85, 0x03,               /* FA6E STA $03                                           */
+        0xAD, 0x20, 0x2C,         /* FA70 LDA $2C20                                         */
+        0x18,                     /* FA73 CLC                                               */
+        0x65, 0x02,               /* FA74 ADC $02                                           */
+        0x8D, 0x20, 0x2C,         /* FA76 STA $2C20                                         */
+        0xAD, 0xC8, 0x2B,         /* FA79 LDA $2BC8                                         */
+        0x65, 0x03,               /* FA7C ADC $03                                           */
+        0x8D, 0xC8, 0x2B,         /* FA7E STA $2BC8                                         */
+        0x60,                     /* FA81 RTS                                               */
+        0xCD, 0xDB, 0xFE,         /* FA82 cmp: CMP $FEDB  carry = new camera >= the limit   */
+        0xD0, 0x05,               /* FA85 BNE done                                          */
+        0xA5, 0x03,               /* FA87 LDA $03                                           */
+        0xCD, 0xDA, 0xFE,         /* FA89 CMP $FEDA                                         */
+        0x60,                     /* FA8C done: RTS                                         */
+    };
+    memcpy(o, t, sizeof t);
+}
+
+/* Put the walk's left check in (on) or take it out; false when it is not in place after. */
+static bool walk_patch(Pce *p, bool on)
+{
+    uint8_t *g = p->page[0x6A], *z = p->page[0x00];
+    if (!g || !z) return false;
+    int s = hit_find(g, on ? WALK_SITE : WALK_JUMP, 18, walk_site);
+    if (s < 0) {   /* already as wanted, or not this code */
+        s = hit_find(g, on ? WALK_JUMP : WALK_SITE, 18, walk_site);
+        if (s >= 0) walk_site = s;
+        return on && s >= 0;
+    }
+    walk_site = s;
+    if (!on) {
+        memcpy(g + s, WALK_SITE, 18);
+        p->cpu.page_gen[0x6A]++;
+        return false;
+    }
+    for (int k = 0; k < 4; k++) {
+        int at_ = s + WALK_NEAR[k].at;
+        if (at_ < 0 || at_ + WALK_NEAR[k].len > 0x2000 || memcmp(g + at_, WALK_NEAR[k].bytes, WALK_NEAR[k].len)) return false;
+    }
+    uint8_t code[WALK_CODE_LEN];
+    walk_code(code, s);
+    uint8_t *c = z + WALK_CODE;
+    if (memcmp(c, code, sizeof code)) {
+        for (int i = 0; i < WALK_CODE_LEN; i++)
+            if (c[i] != 0x60) return false;   /* (not our free space) */
+        memcpy(c, code, sizeof code);
+        p->cpu.page_gen[0x00]++;
+    }
+    memcpy(g + s, WALK_JUMP, 18);
+    p->cpu.page_gen[0x6A]++;
+    return true;
+}
+
+static int walk_cam0;   /* the arena's own camera X (its limits as the game has them) */
+
+/* Each frame: an open arena (ARENAS) in play is made walkable, its right limit widened by
+ * the extension and the left one (WALK_LEFT) likewise; true while it is. Once widened it
+ * stays so until the game puts the room's own limits back (a new room, a life lost), even
+ * with the option turned off meanwhile (the camera may stand away from the arena's X). */
+static bool arena_walk(Wide *w, Pce *p, uint8_t s)
+{
+    uint8_t *r = p->wram;
+    int cam0 = -1;
+    const uint8_t *quiet = NULL;
+    for (size_t i = 0; i < sizeof ARENAS / sizeof ARENAS[0]; i++)
+        if ((r[AREA] & 0xFE) == ARENAS[i].area && r[ROOM] == ARENAS[i].room && r[LIMIT_LEFT] == ARENAS[i].cam >> 8) {
+            cam0 = ARENAS[i].cam;
+            quiet = ARENAS[i].quiet;
+        }
+    int hi = r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1];
+    bool own = cam0 >= 0 && hi == cam0 && (cam0 & 0xFF) == 0;   /* (the limits as the game has them) */
+    /* (widened by us: also from a save state made while it was, when walk_lo is not set) */
+    bool ours = cam0 >= 0 && hi > cam0 && hi <= cam0 + WIDE_MAX;
+    bool on = s == RONDO_PLAYING && (ours || (own && w->want > 0 && w->open_arenas));
+    uint8_t *z = p->page[0x00];
+    if (on && z && walk_patch(p, true)) {
+        int e = ours ? hi - cam0 : w->want;
+        if (!ours) {
+            r[LIMIT_RIGHT] = (uint8_t)((cam0 + e) >> 8);
+            r[LIMIT_RIGHT + 1] = (uint8_t)(cam0 + e);
+        }
+        walk_lo = cam0 - e;
+        walk_cam0 = cam0;
+        z[WALK_LEFT] = (uint8_t)walk_lo;
+        z[WALK_LEFT + 1] = (uint8_t)(walk_lo >> 8);
+        /* the arena's quiet kinds removed (no sprite left behind: kind 0 with a frame is
+         * drawn, as the HUD is) */
+        for (int i = 0x10; i < OBJ_SLOTS; i++)
+            for (int k = 0; k < 4 && quiet[k]; k++)
+                if (r[OBJ_KIND + i] == quiet[k]) {
+                    r[OBJ_KIND + i] = 0;
+                    r[OBJ_FRAME + i] = 0;
+                }
+        return true;
+    }
+    walk_patch(p, false);
+    if (ours) {   /* (could not stay walkable: the arena's own limits back) */
+        r[LIMIT_RIGHT] = (uint8_t)(cam0 >> 8);
+        r[LIMIT_RIGHT + 1] = (uint8_t)cam0;
+    }
+    walk_lo = -1;
+    return false;
 }
 
 /* the camera can move sideways in this room */
@@ -1250,6 +1460,8 @@ void wide_frame(Wide *w, Pce *p)
      * point, depending on how long its frames run (a slow frame moves the camera while the
      * next picture is drawn). Worked out from the camera now, the picture shook by the
      * camera's step at a room's end. (A jump or a new room: the camera now.) */
+    /* an open arena made walkable (arena_walk): its limits widened, so it scrolls */
+    bool walk = arena_walk(w, p, s);
     int drawn = cam;
     if (w->build_seen && wrap(cam - w->build_cam) >= -32 && wrap(cam - w->build_cam) <= 32) drawn = w->build_cam;
     w->build_seen = false;
@@ -1272,12 +1484,14 @@ void wide_frame(Wide *w, Pce *p)
         scrolls = true;
     }
     int mw = (p->vdc.reg[9] >> 4) & 3;         /* background map width: 64+ tiles needed */
-    /* wide: rooms that scroll sideways, drawn with the changes; and rooms one screen wide
-     * whose scenery scrolls past (their layers loop round the whole map), drawn as the game
-     * draws them. Others (vertical shafts, boss rooms, rooms entered before widescreen was
-     * turned on) keep the 4:3 picture. */
+    /* a boss room with no wall at its sides (open_arena; Video > Open arenas) */
+    bool arena = want && w->open_arenas && s == RONDO_PLAYING && !scrolls && open_arena(r);
+    /* wide: rooms that scroll sideways, drawn with the changes; rooms one screen wide whose
+     * scenery scrolls past (their layers loop round the whole map), drawn as the game draws
+     * them; and open arenas, likewise. Others (vertical shafts, boss rooms, rooms entered
+     * before widescreen was turned on) keep the 4:3 picture. */
     bool show = want && s == RONDO_PLAYING && mw >= 1 &&
-                (scrolls ? w->patched : (!w->patched && w->scenery_moving >= 45));
+                (scrolls ? w->patched || walk : arena || (!w->patched && w->scenery_moving >= 45));
     /* sprites past the 256 pixels are built only while the picture is wide */
     if (!show) hit_patches(p, false);   /* (out before the code they call) */
     set_patches(p, DRAW_PATCHES, show);
@@ -1337,7 +1551,7 @@ void wide_frame(Wide *w, Pce *p)
     const uint8_t *blank = vdc_row_bg_blank();
     const uint8_t *edge = vdc_row_bg_edge();
     int rows = p->vdc.fb_h < PCE_FB_MAX_H ? p->vdc.fb_h : PCE_FB_MAX_H;
-    bool clip_parked = ext && !scrolls && !menu && !walls, any_parked = false;
+    bool clip_parked = ext && !scrolls && !menu && !walls && !arena, any_parked = false;
     for (int y = 0; y < PCE_FB_MAX_H; y++) {
         bool same = y < rows && rs[y] == w->row_x[y];
         w->row_still[y] = same ? (uint8_t)(w->row_still[y] < 255 ? w->row_still[y] + 1 : 255) : 0;
@@ -1391,7 +1605,12 @@ void wide_frame(Wide *w, Pce *p)
         w->obj_x[i] = x;
         bool hud = i == HUD_SLOT || i == SUBWEAPON_SLOT;
         bool parked = any_parked && !hud && r[OBJ_FRAME + i] && x < 0 && w->obj_still[i] >= PARKED_FRAMES;
-        if (table) table[i] = parked;
+        /* (in a walkable arena, a free slot too: what is made in it this frame just off the
+         * left is culled as in 4:3. The skull's controller, $33, makes a bat at -32 now and
+         * then that removes itself the next frame, never seen in 4:3, a flash in the wider
+         * picture; arena_walk removes any that stays) */
+        /* (free: no kind and no sprite; the HUD, a boss's bar and titles are kind 0 drawn) */
+        if (table) table[i] = parked || (walk && !hud && !r[OBJ_KIND + i] && !r[OBJ_FRAME + i]);
         /* (the rain only, kind $C2 type 7: not the boat ride's boat and ferryman, fixed to the
          * screen and bobbing, which were drawn again 256 px over at the picture's other edge) */
         bool weather = ext && !hud && r[OBJ_KIND + i] == 0xC2 && (r[OBJ_FLAGS + i] & 1) && r[OBJ_TYPE + i] == 7 &&
@@ -1429,7 +1648,7 @@ void wide_frame(Wide *w, Pce *p)
         const uint8_t *bl = vdc_row_bg_blank();
         bool all_black = true;
         for (int y = 0; y < p->vdc.fb_h && y < PCE_FB_MAX_H && all_black; y++) all_black = bl[y];
-        if (w->lim_seen && (lo != w->lim_lo || hi != w->lim_hi) && !all_black) {
+        if (w->lim_seen && (lo != w->lim_lo || hi != w->lim_hi) && !all_black && !walk) {
             w->calm = true;
             w->calm_cam = cam;
         }
@@ -1499,7 +1718,7 @@ void wide_frame(Wide *w, Pce *p)
         bool first = kind && r[OBJ_FRAME + i] && !(kind == w->obj_kind[i] && w->obj_shown[i]);
         w->obj_kind[i] = kind;
         w->obj_shown[i] = kind && r[OBJ_FRAME + i];
-        if (!first || batch[i] || !ext || s != RONDO_PLAYING || !scrolls || (r[OBJ_FLAGS + i] & 1) ||
+        if (!first || batch[i] || !ext || s != RONDO_PLAYING || !scrolls || walk || (r[OBJ_FLAGS + i] & 1) ||
             i == HUD_SLOT || i == SUBWEAPON_SLOT)
             continue;
         int x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8), to = x;
@@ -1528,6 +1747,19 @@ void wide_frame(Wide *w, Pce *p)
     int dr = reach_r > base ? (reach_r < 0x78 ? reach_r : 0x78) : base;
     int dl = reach_l > base ? (reach_l < 0x78 ? reach_l : 0x78) : base;
     if (w->near_spawns) dr = dl = OBJECT_REACH;
+    /* A walkable arena (arena_walk): objects are made only as far out as from the arena's
+     * own camera (64 px past its 256 pixels), the spawn line kept still while the camera
+     * moves: past the arena's right the level goes on with a bat generator ($35 at $4A0 in
+     * Stage 3's), which sent bats in once the camera had gone right. (At least 1: 0 is
+     * var_value's "the patch's own byte".) */
+    if (walk) {
+        int off = wrap(cam - walk_cam0);
+        dr = 0x40 - (off > 0 ? off : 0);
+        dl = 0x40 - (off < 0 ? -off : 0);
+        if (dr < 1) dr = 1;
+        if (dl < 1) dl = 1;
+        if (!objects_on) set_patches(p, OBJECT_PATCHES, true);
+    }
     var_value[VAR_SPAWN_RIGHT] = (uint8_t)dr;
     var_value[VAR_SPAWN_LEFT] = (uint8_t)(0x100 - dl);
     /* ... but start moving where the game's do, 64 px out: the ground objects stand and
@@ -1541,7 +1773,8 @@ void wide_frame(Wide *w, Pce *p)
     update_vars(p);
     if (s == RONDO_PLAYING && (objects_out || w->gen_r || w->gen_l)) {
         /* (new generators come at the game's edge) */
-        if (objects_out) move_generators(w, p, dr, dl);
+        if (objects_out && !walk) move_generators(w, p, dr, dl);
+        else if (objects_out) move_generators(w, p, 0x40, 0x40);   /* (generators where the game has them) */
         else {
             move_generators(w, p, 0x40, 0x40);
             w->gen_r = w->gen_l = 0;
@@ -1549,7 +1782,7 @@ void wide_frame(Wide *w, Pce *p)
     }
 
     /* scenery bands carried on beside the picture (scenery_fill) */
-    bool filled = ext && show && scrolls && s == RONDO_PLAYING && scenery_fill(p, cam);
+    bool filled = ext && show && scrolls && !walk && s == RONDO_PLAYING && scenery_fill(p, cam);
     vdc_set_map_fill(filled ? scenery : NULL);
 
     p->vdc.wide = ext;
@@ -1585,6 +1818,12 @@ void wide_frame(Wide *w, Pce *p)
 
 void wide_off(Wide *w, Pce *p)
 {
+    if (walk_lo >= 0) {   /* (an arena made walkable: its own limits back) */
+        walk_patch(p, false);
+        p->wram[LIMIT_RIGHT] = (uint8_t)(walk_cam0 >> 8);
+        p->wram[LIMIT_RIGHT + 1] = (uint8_t)walk_cam0;
+        walk_lo = -1;
+    }
     hit_patches(p, false);
     set_patches(p, WORLD_PATCHES | OBJECT_PATCHES | DRAW_PATCHES, false);
     move_generators(w, p, 0x40, 0x40);

@@ -38,6 +38,9 @@ typedef struct Wide {
                             * further out to come into the wider picture from beyond it */
     bool room_sides;       /* rooms kept 4:3 (boss rooms, shafts) shown mirrored beside the
                             * picture, fading to black (room_sides; else black) */
+    bool open_arenas;      /* boss rooms one screen wide with no wall at their sides, listed in
+                            * wide.c (ARENAS), shown wide and walkable to the picture's edges
+                            * (arena_walk) */
     /* results of the last wide_frame(), for the frame that follows it */
     int active;            /* extension drawn (0 = original 4:3 picture) */
     bool patched;          /* every background change is in place */

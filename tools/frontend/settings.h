@@ -24,6 +24,7 @@ typedef struct Settings {
     bool wide_menus;       /* widescreen on the title and file menus too (wide.h; on by default) */
     bool near_spawns;      /* with widescreen, objects made 64 px out as in 4:3 (wide.h; off by default) */
     bool room_sides;       /* with widescreen, rooms kept 4:3 mirrored beside the picture (wide.h; on by default) */
+    bool open_arenas;      /* with widescreen, boss rooms with no side walls shown wide (wide.h; on by default) */
     bool title_art;        /* with widescreen, the player's title_sides.png beside the title
                             * screen (titleart.h; on by default, used only if the file is there) */
     int aspect;            /* ASPECT_* */

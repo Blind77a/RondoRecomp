@@ -25,6 +25,11 @@ options to the in-game menu's Video page (F1 / Back):
   exact timing.
 - **Room sides** (on by default): rooms that keep the 4:3 picture (boss rooms, shafts) show the
   room mirrored at each side, fading to black, instead of black bars.
+- **Open arenas** (on by default): boss rooms that lock the camera to one screen but have no
+  wall at their sides are played across the whole 16:9 picture: Richter can walk out to its
+  edges while the arena stays still on screen (the game's camera follows him inside the
+  wider arena, the picture shifted back). The boss places itself by the game's own screen,
+  so it leans a little towards Richter's side. So far: Stage 3's giant three-eyed skull.
 - **Wide menus** (on by default): the file select menus go widescreen too, with their wavy
   background carried on seamlessly to the sides. Screens whose art doesn't repeat (the title
   screen, story scenes) stay 4:3.

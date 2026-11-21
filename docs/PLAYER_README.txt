@@ -217,6 +217,9 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            differently with Far)
            Room sides: with widescreen, rooms kept 4:3 (boss rooms, shafts) shown with
            the room mirrored at each side, fading to black (On, the default) or black
+           Open arenas: with widescreen, boss rooms with no wall at their sides (so far
+           Stage 3's giant skull) played across the whole 16:9 picture, Richter free
+           to walk to its edges (On, the default), or locked to the 4:3 screen
            Title art: with widescreen, your own picture beside the title screen (On, the
            default; only if you have made one); see below
            Aspect ratio: 4:3 (as on a TV), square pixels, or stretched to fill the screen

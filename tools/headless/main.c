@@ -216,7 +216,7 @@ int main(int argc, char **argv)
     int wide = 0;   /* --wide N: widescreen extension in pixels per side (42 = 16:9 at 4:3, 70 square) */
     bool wide_edges = false;   /* --wide-edges: Video > Level ends */
     bool wide_menus = false;   /* --wide-menus: Video > Wide menus */
-    bool no_room_sides = false, near_spawns = false;
+    bool no_room_sides = false, near_spawns = false, no_open_arenas = false;
     long wide_off_at = 0;   /* --wide-off-at FRAME: widescreen off from then (4:3 from a widened save) */
     static TitleArt title_art;   /* --title-art FILE: 396 x 228 ARGB, raw (titleart.h): shots of the title with it */
     int last_shift = 0;
@@ -305,6 +305,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--wide-menus")) wide_menus = true;   /* Video > Wide menus */
         else if (!strcmp(argv[i], "--no-room-sides")) no_room_sides = true;   /* Video > Room sides off */
         else if (!strcmp(argv[i], "--near-spawns")) near_spawns = true;   /* Video > Spawn distance: Near */
+        else if (!strcmp(argv[i], "--no-open-arenas")) no_open_arenas = true;   /* Video > Open arenas off */
         else if (!strcmp(argv[i], "--wide-off-at") && i + 1 < argc) wide_off_at = atol(argv[++i]);
         else if (!strcmp(argv[i], "--title-art") && i + 1 < argc) {
             static uint32_t tpx[TITLEART_W * TITLEART_FILE_H];
@@ -423,6 +424,7 @@ int main(int argc, char **argv)
     wd.want = wide > WIDE_MAX ? WIDE_MAX : wide;
     wd.edges = wide_edges;
     wd.room_sides = wide_edges && !no_room_sides;
+    wd.open_arenas = !no_open_arenas;
     wd.near_spawns = near_spawns;
     wd.menus = wide_menus;
     for (int i = 0; i < n_ww; i++) ww_last[i] = pce.wram[ww_addr[i]];
