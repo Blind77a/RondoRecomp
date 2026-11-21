@@ -12,9 +12,10 @@ options to the in-game menu's Video page (F1 / Back):
 
 - **Widescreen 16:9** (off by default): shows more of the level on each side, 42 game pixels
   a side with the TV's 4:3 pixels and 64 with square pixels (stretched the last 4% or so to fill 16:9). Background, enemies, items and
-  Stage 2's rain fill the wider picture, and the score display moves to the left edge. Rooms
-  the camera doesn't scroll through sideways (shafts, boss rooms) stay 4:3. Off in
-  RetroAchievements hardcore mode.
+  Stage 2's rain fill the wider picture, and the score display moves to the left edge. A boss
+  that locks the camera mid-level keeps the wide picture. Rooms the camera doesn't scroll
+  through sideways (shafts, boss rooms) keep their 4:3 picture, with the room mirrored at each
+  side, fading to black. Off in RetroAchievements hardcore mode.
 - **Level ends** (on by default): at the start or end of a level, the extra width goes to the
   side the level continues on, so there's no black past the level's wall. The picture stays
   still until Richter has walked far enough for the camera to scroll, and enemies on that side
@@ -30,6 +31,10 @@ options to the in-game menu's Video page (F1 / Back):
   is used instead.
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
+- **Smooth doors** (on by default): past a door, the next part of the level fades in instead
+  of appearing at once.
+- **Fast doors** (off by default): the walk through black past a door, while the next part of
+  the level loads, runs 4x as fast (its sound skipped). Off in hardcore mode.
 - **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as
   the burning town's sky, is drawn as the colour it stands for. Hand-drawn texture is left as
   it is.
@@ -38,7 +43,7 @@ Widescreen also keeps the HUD and a boss's health bar at the screen's edges, bri
 in from beyond the wider edges, and carries on scenery the game drew only as wide as the
 4:3 screen (Stage 2's bridge).
 
-Smooth fades and Smooth dithering change only the picture: the game plays the same, and save
+Smooth fades, Smooth doors and Smooth dithering change only the picture: the game plays the same, and save
 states are unaffected. See [docs/PLAYER_README.txt](docs/PLAYER_README.txt) for details.
 
 ## Supported Platforms

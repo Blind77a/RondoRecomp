@@ -44,6 +44,7 @@
 #include "wide.h"
 #include "dedither.h"
 #include "titleart.h"
+#include "doors.h"
 #include "title_art_data.h"
 
 #define FRAME_RATE (7159090.0 / (455.0 * 263.0))   /* 59.826 Hz */
@@ -1338,6 +1339,21 @@ int main(int argc, char **argv)
                 ran_frame = true;
                 if (have_rewind && set.rewind) rewind_record(&rw, &pce, pce.pad);
                 flush_bram(&ss);
+                /* Video > Fast doors (doors.h): the walk into black past a door runs faster,
+                 * its extra frames neither shown nor heard (not in hardcore) */
+                for (int k = 1; k < DOORS_FAST && set.fast_doors && !test_mode && !hardcore && !features_dir &&
+                                game_playing(&pce) && doors_in_black(&pce.vdc); k++) {
+                    run_frame();
+                    audio_frac += AUDIO_RATE / FRAME_RATE;   /* a frame's worth, not heard */
+                    int skip_n = (int)audio_frac;
+                    audio_frac -= skip_n;
+                    pce_audio_render(&pce, samples, skip_n);
+                    game_apply_cheats(&pce, &cheats, &gw);
+                    game_apply_run(&pce, set.run && !hardcore && input_run_held(&in), &gw);
+                    ach_frame();
+                    if (have_rewind && set.rewind) rewind_record(&rw, &pce, pce.pad);
+                    flush_bram(&ss);
+                }
                 if (features_dir && game_playing(&pce) && pce.frame > 16200 && pce.wram[RONDO_HEALTH] < t_min_health)
                     t_min_health = pce.wram[RONDO_HEALTH];
             }
@@ -1412,7 +1428,12 @@ int main(int argc, char **argv)
                 video_upload(&video, ta, 256 + 2 * ta_ext, pce.vdc.fb_h, PCE_FB_MAX_W, ta_ext);
                 video.src_wide_full = ta_ext;
             } else {
-                video_upload(&video, fb + cut, pce.vdc.fb_w - 2 * cut, pce.vdc.fb_h, PCE_FB_MAX_W, have - cut);
+                /* Video > Smooth doors (doors.h) */
+                static Doors doors;
+                DoorPic pic = {fb + cut, pce.vdc.fb_w - 2 * cut, pce.vdc.fb_h, have - cut};
+                pic = ran_frame ? doors_frame(&doors, pic, game_playing(&pce), set.smooth_doors && !test_mode)
+                                : doors_again(&doors, pic);
+                video_upload(&video, pic.px, pic.w, pic.h, PCE_FB_MAX_W, pic.wide);
                 video.src_wide_full = have;
             }
         }
