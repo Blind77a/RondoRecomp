@@ -27,6 +27,8 @@ void settings_default(Settings *s)
     s->wide_edges = true;
     s->wide_menus = true;
     s->title_art = true;
+    s->smooth_doors = true;
+    s->fast_doors = false;
     bind_defaults(s->bind_pad, s->bind_key);
 }
 
@@ -63,6 +65,8 @@ void settings_load(Settings *s, const char *path)
         else if (!strcmp(key, "effect_strength")) s->effect_strength = clampi(n, 0, STRENGTH_COUNT - 1);
         else if (!strcmp(key, "sides")) s->sides = clampi(n, 0, SIDES_COUNT - 1);
         else if (!strcmp(key, "smooth_fades")) s->smooth_fades = n != 0;
+        else if (!strcmp(key, "smooth_doors")) s->smooth_doors = n != 0;
+        else if (!strcmp(key, "fast_doors")) s->fast_doors = n != 0;
         else if (!strcmp(key, "smooth_dithering")) s->smooth_dither = n != 0;
         else if (!strcmp(key, "skip_cinematics")) s->skip = clampi(n, 0, SKIP_COUNT - 1);
         else if (!strcmp(key, "rewind")) s->rewind = n != 0;
@@ -104,13 +108,13 @@ bool settings_save(const Settings *s, const char *path)
     fprintf(f,
             "# Rondo Recomp options (also changed from the in-game menu: F1 / Back)\n"
             "fullscreen = %d\nvsync = %d\nwidescreen_16_9 = %d\nwidescreen_edges = %d\nwidescreen_menus = %d\nwidescreen_title_art = %d\naspect = %d\nscaling = %d\nfilter = %d\n"
-            "screen_effect = %d\neffect_strength = %d\nsides = %d\nsmooth_fades = %d\nsmooth_dithering = %d\n"
+            "screen_effect = %d\neffect_strength = %d\nsides = %d\nsmooth_fades = %d\nsmooth_doors = %d\nfast_doors = %d\nsmooth_dithering = %d\n"
             "skip_cinematics = %d\nrewind = %d\nvolume = %d\nslot = %d\nstart_screen = %d\n"
             "eight_way = %d\nlimp_whip = %d\nrun = %d\n"
             "cheat_health = %d\ncheat_hearts = %d\ncheat_lives = %d\n"
             "maria_unlocked = %d\nplay_maria = %d\n"
             "language = %d\ndisc_ja = %s\ndisc_en = %s\n",
-            s->fullscreen, s->vsync, s->widescreen, s->wide_edges, s->wide_menus, s->title_art, s->aspect, s->scaling, s->filter, s->effect, s->effect_strength, s->sides, s->smooth_fades, s->smooth_dither,
+            s->fullscreen, s->vsync, s->widescreen, s->wide_edges, s->wide_menus, s->title_art, s->aspect, s->scaling, s->filter, s->effect, s->effect_strength, s->sides, s->smooth_fades, s->smooth_doors, s->fast_doors, s->smooth_dither,
             s->skip, s->rewind, s->volume, s->slot, s->start_screen,
             s->eight_way, s->limp_whip, s->run,
             s->cheat_health, s->cheat_hearts, s->cheat_lives,

@@ -289,6 +289,8 @@ void vdc_set_side_tiles(const uint16_t *left, const uint16_t *right)
 const uint16_t *vdc_row_map_y(void) { return row_map_y; }
 static bool side_real;
 void vdc_set_side_real(bool on) { side_real = on; }
+static bool side_fade;
+void vdc_set_side_fade(bool on) { side_fade = on; }
 static const uint16_t *map_fill;
 void vdc_set_map_fill(const uint16_t *fill) { map_fill = fill; }
 
@@ -520,6 +522,19 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line)
             if (x >= c0 && x < c1) continue;
             uint16_t s = sp[x];
             dst[x] = s ? pal[s & 0x1FF] : 0xFF000000u;
+        }
+        /* side fade: darker towards the picture's outer edges, black at them */
+        if (side_fade) {
+            int left = orig, right = w - (orig + 256);
+            for (int x = 0; x < w; x++) {
+                int k;   /* brightness, 0..256 */
+                if (x < orig) k = left > 0 ? (x + 1) * 256 / (left + 1) : 256;
+                else if (x >= orig + 256) k = right > 0 ? (w - x) * 256 / (right + 1) : 256;
+                else continue;
+                uint32_t c = dst[x];
+                dst[x] = 0xFF000000u | (((c & 0xFF00FF) * (uint32_t)k >> 8) & 0xFF00FF) |
+                         (((c & 0xFF00) * (uint32_t)k >> 8) & 0xFF00);
+            }
         }
     }
 }

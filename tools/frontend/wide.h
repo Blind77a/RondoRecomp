@@ -40,6 +40,15 @@ typedef struct Wide {
     int shift;             /* the picture's shift this frame (vdc_set_wide_shift) */
     int build_cam;         /* the camera as the game last built its sprites (hud_at_build) */
     bool build_seen;
+    /* the camera's limits (LIMIT_LEFT page, LIMIT_RIGHT X) while the room last scrolled: a
+     * boss locking the camera to one screen keeps the picture wide, with these walls */
+    int open_lo, open_hi;
+    bool open_seen;
+    /* the limits last frame; calm: they changed with no new room (past a door), the picture
+     * not shifted until the camera has gone 128 px from calm_cam */
+    int lim_lo, lim_hi;
+    bool lim_seen, calm;
+    int calm_cam;
     int menu_good;         /* frames in a row a menu's sides could be filled (to MENU_FRAMES) */
     int menu_bad;          /* ... and since then could not */
     int menu_bxr, menu_moved;   /* a menu's sideways scroll last frame, frames it has not moved */

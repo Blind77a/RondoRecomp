@@ -132,6 +132,10 @@ void vdc_set_side_tiles(const uint16_t *left, const uint16_t *right);
  * from the scroll without wrapping), and sprites are drawn beside the 256 pixels too: the
  * page coming in and the one going out show across the whole picture. */
 void vdc_set_side_real(bool on);
+/* Side fade (host-side, like the above): the picture beside the original 256 pixels darkens
+ * towards its outer edges, to black at them (widescreen's walls repeated beside a room kept
+ * 4:3, so they recede rather than stand as part of the room). */
+void vdc_set_side_fade(bool on);
 const uint16_t *vdc_row_map_y(void);
 /* Map fill (host-side, like the above): background map entries drawn instead of the map's
  * own beside the original 256 pixels, by map position: fill[row * VDC_FILL_W + column]
