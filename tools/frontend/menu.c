@@ -92,6 +92,8 @@ static const Item VIDEO_ITEMS[] = {
     CHOICE("Effect strength", effect_strength, EFFECT_STRENGTHS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Beside the picture", sides, SIDES, 0, MENU_SETTINGS_CHANGED),
     TOGGLE("Smooth fades", smooth_fades, MENU_SETTINGS_CHANGED),
+    TOGGLE("Smooth doors", smooth_doors, MENU_SETTINGS_CHANGED),
+    TOGGLE("Fast doors", fast_doors, MENU_SETTINGS_CHANGED),
     TOGGLE("Smooth dithering", smooth_dither, MENU_SETTINGS_CHANGED),
     {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
 };
@@ -192,6 +194,8 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Fullscreen", "Use the whole screen at its own resolution (F11)."},
     {"VSync", "Show each frame when the screen refreshes: no tearing. Off: at once, maybe torn."},
     {"Widescreen", "16:9: more of the level each side. Experimental: some rooms stay 4:3; glitches possible."},
+    {"Smooth doors", "Past a door, the next part of the level fades in instead of appearing at once."},
+    {"Fast doors", "The walk through black past a door runs 4x as fast (its sound skipped). Not in hardcore."},
     {"Aspect ratio", "4:3 as on a TV, square pixels, or stretched to fill."},
     {"Size", "As big as the screen allows, or whole multiples only."},
     {"Filter", "Sharp: crisp, even pixels. Nearest: raw. Smooth: softened."},

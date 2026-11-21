@@ -225,6 +225,11 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            Smooth fades: Off (the default) or on: the game's fades in and out (scenes,
            stages, story text) blend smoothly in full colour instead of in the console's
            8 steps. Only the picture changes; the game plays the same
+           Smooth doors: On (the default) or off: past a door, the next part of the level
+           fades in instead of appearing at once. Only the picture changes
+           Fast doors: Off (the default) or on: the walk through black past a door, while
+           the next part of the level is put up, runs 4 times as fast (its sound skipped).
+           Not in RetroAchievements hardcore mode
            Smooth dithering: Off (the default) or on: the checkerboards and patterns of
            dots the game mixes two colours with (the red sky behind the burning town) are
            drawn as the smooth colour they stand for. Drawn texture (stone, wood, grass,
