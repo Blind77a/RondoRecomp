@@ -211,6 +211,12 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            over (the default) or Black; see below
            Wide menus: with widescreen, the file select menus wide too (On, the default)
            or 4:3; see below
+           Spawn distance: with widescreen, Far (the default): enemies and items come to
+           life further out, so they come into the wider picture from beyond it; Near:
+           where the 4:3 game makes them (its own timing, for anything that plays
+           differently with Far)
+           Room sides: with widescreen, rooms kept 4:3 (boss rooms, shafts) shown with
+           the room mirrored at each side, fading to black (On, the default) or black
            Title art: with widescreen, your own picture beside the title screen (On, the
            default; only if you have made one); see below
            Aspect ratio: 4:3 (as on a TV), square pixels, or stretched to fill the screen
@@ -225,11 +231,6 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            Smooth fades: Off (the default) or on: the game's fades in and out (scenes,
            stages, story text) blend smoothly in full colour instead of in the console's
            8 steps. Only the picture changes; the game plays the same
-           Smooth doors: On (the default) or off: past a door, the next part of the level
-           fades in instead of appearing at once. Only the picture changes
-           Fast doors: Off (the default) or on: the walk through black past a door, while
-           the next part of the level is put up, runs 4 times as fast (its sound skipped).
-           Not in RetroAchievements hardcore mode
            Smooth dithering: Off (the default) or on: the checkerboards and patterns of
            dots the game mixes two colours with (the red sky behind the burning town) are
            drawn as the smooth colour they stand for. Drawn texture (stone, wood, grass,
@@ -248,6 +249,9 @@ Gameplay   Skip cinematics: Press START, Automatically, or Never. During the log
            from his hand; the d-pad swings it around (it still hurts what it touches) and
            letting go of Attack ends it. Ideas from Pizzano's Super Rondo of Blood hack,
            made anew for RondoRecomp (none of the hack is used)
+           Sticky stairs (off by default): a jump that comes down onto stairs lands on
+           them without holding Up (Up is held for you while you come down, unless you
+           attack or hold Down). Not in RetroAchievements hardcore mode
            Run (on by default): holding the Run control (LB / S) runs, as in Symphony of
            the Night (see Controls above); off, it does nothing
 RetroAchievements

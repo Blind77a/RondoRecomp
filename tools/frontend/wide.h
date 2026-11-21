@@ -34,6 +34,10 @@ typedef struct Wide {
                             * of showing black past its wall (wide_frame) */
     bool menus;            /* the title and file menus drawn wide too (their backgrounds
                             * carried on past the sides; wide_frame) */
+    bool near_spawns;      /* objects made where the 4:3 game makes them (64 px out), not
+                            * further out to come into the wider picture from beyond it */
+    bool room_sides;       /* rooms kept 4:3 (boss rooms, shafts) shown mirrored beside the
+                            * picture, fading to black (room_sides; else black) */
     /* results of the last wide_frame(), for the frame that follows it */
     int active;            /* extension drawn (0 = original 4:3 picture) */
     bool patched;          /* every background change is in place */
@@ -49,6 +53,7 @@ typedef struct Wide {
     int lim_lo, lim_hi;
     bool lim_seen, calm;
     int calm_cam;
+    int inside_shift;      /* the shift while the camera was last within the room's limits */
     int menu_good;         /* frames in a row a menu's sides could be filled (to MENU_FRAMES) */
     int menu_bad;          /* ... and since then could not */
     int menu_bxr, menu_moved;   /* a menu's sideways scroll last frame, frames it has not moved */
