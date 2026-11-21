@@ -1217,6 +1217,7 @@ int main(int argc, char **argv)
             SDL_GetRenderOutputSize(ren, &ww, &wh);
             wide.edges = set.wide_edges;
             wide.room_sides = set.room_sides;
+            wide.open_arenas = set.open_arenas;
             wide.near_spawns = set.near_spawns;
             wide.menus = set.wide_menus;
             wide.want = set.widescreen && !hardcore && wh > 0
