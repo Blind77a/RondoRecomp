@@ -14,12 +14,17 @@ options to the in-game menu's Video page (F1 / Back):
   a side with the TV's 4:3 pixels and 64 with square pixels (stretched the last 4% or so to fill 16:9). Background, enemies, items and
   Stage 2's rain fill the wider picture, and the score display moves to the left edge. A boss
   that locks the camera mid-level keeps the wide picture. Rooms the camera doesn't scroll
-  through sideways (shafts, boss rooms) keep their 4:3 picture, with the room mirrored at each
-  side, fading to black. Off in RetroAchievements hardcore mode.
+  through sideways (shafts, boss rooms) keep their 4:3 picture (see Room sides). Off in
+  RetroAchievements hardcore mode.
 - **Level ends** (on by default): at the start or end of a level, the extra width goes to the
   side the level continues on, so there's no black past the level's wall. The picture stays
   still until Richter has walked far enough for the camera to scroll, and enemies on that side
   appear further out so they don't pop into view.
+- **Spawn distance** (Far by default): with Far, enemies and items come to life further out so
+  they enter the wider picture from beyond it; Near makes them where the 4:3 game does, for its
+  exact timing.
+- **Room sides** (on by default): rooms that keep the 4:3 picture (boss rooms, shafts) show the
+  room mirrored at each side, fading to black, instead of black bars.
 - **Wide menus** (on by default): the file select menus go widescreen too, with their wavy
   background carried on seamlessly to the sides. Screens whose art doesn't repeat (the title
   screen, story scenes) stay 4:3.
@@ -31,10 +36,6 @@ options to the in-game menu's Video page (F1 / Back):
   is used instead.
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
-- **Smooth doors** (on by default): past a door, the next part of the level fades in instead
-  of appearing at once.
-- **Fast doors** (off by default): the walk through black past a door, while the next part of
-  the level loads, runs 4x as fast (its sound skipped). Off in hardcore mode.
 - **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as
   the burning town's sky, is drawn as the colour it stands for. Hand-drawn texture is left as
   it is.
@@ -43,7 +44,7 @@ Widescreen also keeps the HUD and a boss's health bar at the screen's edges, bri
 in from beyond the wider edges, and carries on scenery the game drew only as wide as the
 4:3 screen (Stage 2's bridge).
 
-Smooth fades, Smooth doors and Smooth dithering change only the picture: the game plays the same, and save
+Smooth fades and Smooth dithering change only the picture: the game plays the same, and save
 states are unaffected. See [docs/PLAYER_README.txt](docs/PLAYER_README.txt) for details.
 
 ## Supported Platforms
@@ -83,6 +84,7 @@ ISO/WAV/BIN tracks); everything derived from it goes to `work/`, which is git-ig
 - Save stating
 - Cheats
 - Super Castlevania IV moves (Gameplay page): 8-way whipping and dove throwing, and a limp whip, after Pizzano's Super Rondo of Blood hack (RondoRecomp's own version)
+- **Sticky stairs** (Gameplay page, off by default): jumps land on stairs without holding Up
 - RetroAchievements
 - Portable mode: tick Portable in Setup (or make a `user` folder next to `rondo.exe` or the AppImage) and options, saves and states are kept there
 - 4:3 screens (arcade cabinets): Setup's window always fits the screen and has a 4:3 layout (picked on a 4:3 screen, or with its "4:3 screen" checkbox or `--4:3`); the game's start screen and menus are laid out for 4:3 too
