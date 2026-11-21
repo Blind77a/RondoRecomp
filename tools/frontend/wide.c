@@ -468,6 +468,23 @@ static void place_hud(Pce *p, int left, int right)
 /* signed distance a - b in the camera's 4096-pixel space */
 static int wrap(int d) { d &= 0xFFF; return d >= 0x800 ? d - 0x1000 : d; }
 
+/* The room's walls relative to camera X cam: left, the left wall's screen X (<= 0 inside the
+ * room), right, the right wall's (just past its last pixel). Measured directly while the
+ * camera is within the room's limits (a room can be wider than 2048 px: the boat ride's
+ * is 3584, where the wrapped distance put the left wall on the screen's right and blacked
+ * the whole background out); else the nearest way round. */
+static void room_walls(const uint8_t *r, int cam, int *left, int *right)
+{
+    int lo = r[LIMIT_LEFT] * 256, hi = r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1];
+    if (cam >= lo && cam <= hi) {
+        *left = lo - cam;
+        *right = hi - cam + 256;
+    } else {
+        *left = wrap(lo - cam);
+        *right = wrap(hi - cam) + 256;
+    }
+}
+
 /* the camera can move sideways in this room */
 static bool room_scrolls(const uint8_t *r)
 {
@@ -505,8 +522,8 @@ static void hud_at_build(Wide *w, Pce *p)
     int ext = p->vdc.wide;
     if (!ext || game_state(p) != RONDO_PLAYING || !w->edges || !room_scrolls(r)) return;
     int cam = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL];
-    int left = wrap(r[LIMIT_LEFT] * 256 - cam);
-    int right = wrap((r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1]) - cam) + 256;
+    int left, right;
+    room_walls(r, cam, &left, &right);
     place_hud_left(p, ext - edge_shift(left, right, ext));
     w->build_cam = cam;   /* (the picture follows it too: wide_frame) */
     w->build_seen = true;
@@ -532,8 +549,9 @@ static void on_entry(Pce *p, void *ctx)
     uint8_t start = 0x20;
     if (w->edges && w->want > 0 && scrolls) {
         int cam = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL];
-        int from_left = wrap(cam - r[LIMIT_LEFT] * 256);
-        int to_right = wrap(r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1] - cam);
+        int wl, wr;
+        room_walls(r, cam, &wl, &wr);
+        int from_left = -wl, to_right = wr - 256;
         if (from_left < w->want) start = 0xB0;
         else if (to_right < w->want) start = 0x00;
     }
@@ -872,8 +890,8 @@ void wide_frame(Wide *w, Pce *p)
     int drawn = cam;
     if (w->build_seen && wrap(cam - w->build_cam) >= -32 && wrap(cam - w->build_cam) <= 32) drawn = w->build_cam;
     w->build_seen = false;
-    int left = wrap(r[LIMIT_LEFT] * 256 - drawn);
-    int right = wrap((r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1]) - drawn) + 256;
+    int left, right;
+    room_walls(r, drawn, &left, &right);
     bool scrolls = room_scrolls(r);
     int mw = (p->vdc.reg[9] >> 4) & 3;         /* background map width: 64+ tiles needed */
     /* wide: rooms that scroll sideways, drawn with the changes; and rooms one screen wide
@@ -987,8 +1005,10 @@ void wide_frame(Wide *w, Pce *p)
         bool hud = i == HUD_SLOT || i == SUBWEAPON_SLOT;
         bool parked = any_parked && !hud && r[OBJ_FRAME + i] && x < 0 && w->obj_still[i] >= PARKED_FRAMES;
         if (table) table[i] = parked;
-        bool weather = ext && !hud && r[OBJ_KIND + i] && (r[OBJ_FLAGS + i] & 1) && x >= 0 && x < 256 &&
-                       w->obj_still[i] < ECHO_STILL_FRAMES;
+        /* (the rain only, kind $C2 type 7: not the boat ride's boat and ferryman, fixed to the
+         * screen and bobbing, which were drawn again 256 px over at the picture's other edge) */
+        bool weather = ext && !hud && r[OBJ_KIND + i] == 0xC2 && (r[OBJ_FLAGS + i] & 1) && r[OBJ_TYPE + i] == 7 &&
+                       x >= 0 && x < 256 && w->obj_still[i] < ECHO_STILL_FRAMES;
         bool round = ext && !hud && r[OBJ_KIND + i] && !(r[OBJ_FLAGS + i] & 1) && recycled[r[OBJ_KIND + i]];
         /* ...but not onto one of the row the game is hiding (frame 0: a pillar it leaves out
          * where the bridge ends): the copy 256 px on would stand in for it there. (The other

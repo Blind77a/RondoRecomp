@@ -315,6 +315,11 @@ disc as it goes):
   position, so it scrolls with the band). Gaps between clouds are shorter and left alone; a row less than half drawn
   is no band (Stage 2's first room: an empty bottom row but for a tower, once seen scrolled
   apart, was filled with floor tiles).
+- The room's walls are measured directly from the camera while it is within the room's
+  limits (`room_walls`): the boat ride's room is 3584 px wide, more than the 2048 a wrapped
+  12-bit distance covers, and its left wall came out on the screen's right (the background all
+  black). Only the rain (kind $C2, type 7) is echoed as weather: the boat ride's boat and
+  ferryman, fixed to the screen and bobbing, were drawn again 256 px over.
 - Level ends follow the camera the game built its sprites with (`hud_at_build`, recorded and
   used by the next `wide_frame`): the game draws the playfield with that same camera, which is
   the camera before or after `wide_frame`'s point depending on how long its frames run (a slow
