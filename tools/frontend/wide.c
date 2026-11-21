@@ -508,6 +508,8 @@ static void hud_at_build(Wide *w, Pce *p)
     int left = wrap(r[LIMIT_LEFT] * 256 - cam);
     int right = wrap((r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1]) - cam) + 256;
     place_hud_left(p, ext - edge_shift(left, right, ext));
+    w->build_cam = cam;   /* (the picture follows it too: wide_frame) */
+    w->build_seen = true;
 }
 
 static void on_entry(Pce *p, void *ctx)
@@ -862,8 +864,16 @@ void wide_frame(Wide *w, Pce *p)
      * from the next one) */
     int ext = w->want;
     int cam = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL];
-    int left = wrap(r[LIMIT_LEFT] * 256 - cam);
-    int right = wrap((r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1]) - cam) + 256;
+    /* The picture is shifted for the camera the game built its sprites with (hud_at_build):
+     * it draws the playfield with the same one, which can be the camera before or after this
+     * point, depending on how long its frames run (a slow frame moves the camera while the
+     * next picture is drawn). Worked out from the camera now, the picture shook by the
+     * camera's step at a room's end. (A jump or a new room: the camera now.) */
+    int drawn = cam;
+    if (w->build_seen && wrap(cam - w->build_cam) >= -32 && wrap(cam - w->build_cam) <= 32) drawn = w->build_cam;
+    w->build_seen = false;
+    int left = wrap(r[LIMIT_LEFT] * 256 - drawn);
+    int right = wrap((r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1]) - drawn) + 256;
     bool scrolls = room_scrolls(r);
     int mw = (p->vdc.reg[9] >> 4) & 3;         /* background map width: 64+ tiles needed */
     /* wide: rooms that scroll sideways, drawn with the changes; and rooms one screen wide
