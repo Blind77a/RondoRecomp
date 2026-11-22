@@ -111,6 +111,13 @@ void vdc_set_sprite_hide(uint64_t mask);
  *   top left) left out of the picture, counted as drawn as above. Widescreen's menus: a sliver
  *   in the 4:3 picture's corner stood mid-picture there. */
 void vdc_set_hide_corner(bool on);
+/* - vdc_set_extra_sprites: sprites of the host's own, drawn from the game's sprite graphics in
+ *   VRAM with its palettes, behind the game's sprites and outside its sprite count and
+ *   collisions (widescreen: a lantern of the game's hung beside a room). x, y: screen
+ *   position as a sprite's (the original 256 pixels from x 0); pattern, attr: as in the
+ *   sprite table. NULL for none; the list must stay valid while frames are drawn. */
+typedef struct VdcExtraSprite { int16_t x, y; uint16_t pattern, attr; } VdcExtraSprite;
+void vdc_set_extra_sprites(const VdcExtraSprite *list, int n);
 /* - vdc_set_sprite_move: sprites whose pattern is pattern_lo..pattern_hi drawn dx px further
  *   right (widescreen: a boss's health bar at the picture's right edge); hi < lo for none. */
 void vdc_set_sprite_move(int pattern_lo, int pattern_hi, int dx);
@@ -140,11 +147,12 @@ void vdc_set_side_real(bool on);
 /* Side fade (host-side, like the above): the picture beside the original 256 pixels darkens
  * towards its outer edges, to black at them (widescreen's walls repeated beside a room kept
  * 4:3, so they recede rather than stand as part of the room). */
-void vdc_set_side_fade(bool on);
+enum { VDC_SIDE_LEFT = 1, VDC_SIDE_RIGHT = 2 };   /* (the sides, for the two below) */
+void vdc_set_side_fade(int sides);
 /* Side flip (host-side, like the above): side tiles drawn mirrored left to right, which the
  * hardware cannot do; with the side tiles holding the room's columns in mirrored order, the
  * sides are the room's exact mirror image (widescreen's Room sides). */
-void vdc_set_side_flip(bool on);
+void vdc_set_side_flip(int sides);
 /* Background map writes (host-side, like the above): a flag per word of VRAM below
  * VDC_BAT_WATCH (the map, up to 64 x 64), set when the game writes it (by the data port or
  * DMA), changed or not, until cleared (widescreen: a column or row drawn again shows as one
@@ -173,3 +181,9 @@ const uint32_t *vdc_behind_pixels(void);
  * 4:3 picture ever shows, carried on in its own tiles (wide.c). NULL for none. */
 #define VDC_FILL_W 128
 void vdc_set_map_fill(const uint16_t *fill);
+/* Map patch (host-side, like the above): like the map fill, background map entries drawn
+ * instead of the map's own by map position, but anywhere in the picture, the original 256
+ * pixels too (widescreen's side recipes: a drainpipe at a room's edge, which the wall laid
+ * beside it would stand against, bricked over). The map in VRAM is left as it is. NULL for
+ * none. */
+void vdc_set_map_patch(const uint16_t *patch);

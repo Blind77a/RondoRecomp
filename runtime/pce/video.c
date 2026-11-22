@@ -301,12 +301,14 @@ static uint32_t behind_px[PCE_FB_MAX_W * PCE_FB_MAX_H];
 const uint32_t *vdc_behind_pixels(void) { return behind_px; }
 static bool side_real;
 void vdc_set_side_real(bool on) { side_real = on; }
-static bool side_fade;
-void vdc_set_side_fade(bool on) { side_fade = on; }
-static bool side_flip;
-void vdc_set_side_flip(bool on) { side_flip = on; }
+static int side_fade;   /* VDC_SIDE_LEFT | VDC_SIDE_RIGHT */
+void vdc_set_side_fade(int sides) { side_fade = sides; }
+static int side_flip;
+void vdc_set_side_flip(int sides) { side_flip = sides; }
 static const uint16_t *map_fill;
 void vdc_set_map_fill(const uint16_t *fill) { map_fill = fill; }
+static const uint16_t *map_patch;
+void vdc_set_map_patch(const uint16_t *patch) { map_patch = patch; }
 static const uint16_t *side_vram;
 static int side_vram_side;
 static const int16_t *side_vram_dx, *side_vram_dy;
@@ -374,6 +376,10 @@ const uint8_t *vdc_row_bg_edge(void) { return row_bg_edge; }
 void vdc_set_row_clip(const uint8_t *rows) { row_clip = rows; }
 static uint64_t sprite_hide;
 void vdc_set_sprite_hide(uint64_t mask) { sprite_hide = mask; }
+static const VdcExtraSprite *extra_spr;
+#define EXTRA_PX 0x4000   /* (a pixel of an extra sprite: kept beside the 256 pixels with side tiles) */
+static int n_extra;
+void vdc_set_extra_sprites(const VdcExtraSprite *list, int n) { extra_spr = list; n_extra = list ? n : 0; }
 static bool hide_corner;
 void vdc_set_hide_corner(bool on) { hide_corner = on; }
 static int move_lo, move_hi = -1, move_dx;
@@ -422,6 +428,10 @@ static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out, int line)
             uint16_t f = map_fill[(py >> 3) * VDC_FILL_W + ((px >> 3) & (VDC_FILL_W - 1))];
             if (f != VDC_SIDE_NONE) e = f;
         }
+        if (map_patch) {   /* (anywhere in the picture) */
+            uint16_t f = map_patch[(py >> 3) * VDC_FILL_W + ((px >> 3) & (VDC_FILL_W - 1))];
+            if (f != VDC_SIDE_NONE) e = f;
+        }
         bool flip = false;
         if (sides) {
             int col = (sx + x) >> 3;   /* (arithmetic shift: floor) */
@@ -429,7 +439,7 @@ static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out, int line)
             if (k >= VDC_SIDE_TILES) k = VDC_SIDE_TILES - 1;
             if (side_real && col >= 0 && col < mw) k = -1;   /* the map's own, short of wrapping round */
             if (k >= 0) {
-                flip = side_flip;
+                flip = (side_flip & (col < first ? VDC_SIDE_LEFT : VDC_SIDE_RIGHT)) != 0;
                 e = col < first ? sl[k] : sr[k];
                 if (e == VDC_SIDE_NONE) {
                     out[x] = 0;
@@ -502,6 +512,33 @@ static void render_sprites(Vdc *d, int y, int x0, int w, uint16_t *out)
             if (!out[x] && !hidden) out[x] = (uint16_t)(front | pal | col);
         }
     }
+    /* the host's extra sprites (vdc_set_extra_sprites): behind the game's own, outside its
+     * sprite count and collisions */
+    for (int i = 0; i < n_extra; i++) {
+        const VdcExtraSprite *e = &extra_spr[i];
+        int cgy = (e->attr >> 12) & 3, h = cgy == 0 ? 16 : cgy == 1 ? 32 : 64;
+        if (y < e->y || y >= e->y + h) continue;
+        int sw = (e->attr & 0x0100) ? 32 : 16, pattern = e->pattern & 0x3FF;
+        if (sw == 32) pattern &= ~1;
+        if (h == 32) pattern &= ~2;
+        if (h == 64) pattern &= ~6;
+        int r = y - e->y;
+        if (e->attr & 0x8000) r = h - 1 - r;
+        bool xflip = (e->attr & 0x0800) != 0;
+        uint16_t pal = (uint16_t)(0x100 | (e->attr & 0xF) << 4), front = (e->attr & 0x80) ? 0x8000 : 0;
+        for (int c = 0; c < sw; c++) {
+            int x = e->x - x0 + c;
+            if (x < 0 || x >= w || out[x]) continue;
+            int cc = xflip ? sw - 1 - c : c;
+            int cell = pattern + (r >> 4) * 2 + (cc >> 4);
+            uint32_t a = ((uint32_t)cell * 64 + (r & 15)) & 0x7FFF;
+            int bit = 15 - (cc & 15);
+            int col = ((d->vram[a] >> bit) & 1) | ((d->vram[(a + 16) & 0x7FFF] >> bit) & 1) << 1 |
+                      ((d->vram[(a + 32) & 0x7FFF] >> bit) & 1) << 2 |
+                      ((d->vram[(a + 48) & 0x7FFF] >> bit) & 1) << 3;
+            if (col) out[x] = (uint16_t)(front | EXTRA_PX | pal | col);
+        }
+    }
 }
 
 void vdc_line_end(Vdc *d, const Vce *vce, int line)
@@ -535,7 +572,7 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line)
         /* side tiles: no sprites beside the original 256 pixels (a game parks the ones it
          * does not use just off its screen) */
         for (int x = 0; x < w; x++)
-            if (x < orig || x >= orig + 256) sp[x] = 0;
+            if ((x < orig || x >= orig + 256) && !(sp[x] & EXTRA_PX)) sp[x] = 0;
     }
     {
         bool any = false;
@@ -577,8 +614,8 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line)
             int left = orig, right = w - (orig + 256);
             for (int x = 0; x < w; x++) {
                 int k;   /* brightness, 0..256 */
-                if (x < orig) k = left > 0 ? (x + 1) * 256 / (left + 1) : 256;
-                else if (x >= orig + 256) k = right > 0 ? (w - x) * 256 / (right + 1) : 256;
+                if (x < orig && (side_fade & VDC_SIDE_LEFT)) k = left > 0 ? (x + 1) * 256 / (left + 1) : 256;
+                else if (x >= orig + 256 && (side_fade & VDC_SIDE_RIGHT)) k = right > 0 ? (w - x) * 256 / (right + 1) : 256;
                 else continue;
                 uint32_t c = dst[x];
                 dst[x] = 0xFF000000u | (((c & 0xFF00FF) * (uint32_t)k >> 8) & 0xFF00FF) |
