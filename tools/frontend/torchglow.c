@@ -4,6 +4,7 @@
 #include "pce/pce.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -187,13 +188,16 @@ int moon_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame)
 }
 
 /* Shield shine: the wall of heraldic shields (Stage 2's docks, area $26): each shield's olive
- * rim ($6D6D48, $484824) catches the light as a glint runs round it, every 48 frames. A shield
+ * rim ($6D6D48, $484824) catches the light as a glint runs round it, now and then (3-7 s apart),
+ * on one shield of those in view at random (now and then two). A shield
  * is found by its rim's upper part: a connected run of those two colours some 20-26 px wide
  * and 14-24 tall; the shield is that wide and 40 tall from its top. Only the rim's pixels
  * change, the face and the stone round it are left as they are. */
 #define SHIELD_RIM_A 0xFF6D6D48u
 #define SHIELD_RIM_B 0xFF484824u
 #define MAX_SHIELDS 24
+#define SHINE_BLOCK 300   /* frames (5 s) */
+#define SHINE_GAP 180     /* the least time between two glints' starts (3 s) */
 static bool rim_px(uint32_t p) { return p == SHIELD_RIM_A || p == SHIELD_RIM_B; }
 
 int shield_shine(uint32_t *img, int w, int h, int pitch, uint64_t frame)
@@ -233,8 +237,48 @@ int shield_shine(uint32_t *img, int w, int h, int pitch, uint64_t frame)
                 n++;
             }
         }
-    float t = (float)(frame % 48) / 48.0f;
+    /* when: one glint (48 frames) in each SHINE_BLOCK frames, starting at a random point in
+     * the block's first SHINE_BLOCK - SHINE_GAP frames, so glints start SHINE_GAP (3 s) to
+     * 2 * SHINE_BLOCK - SHINE_GAP (7 s) apart, at no set beat */
+    uint64_t blk = frame / SHINE_BLOCK;
+    int start = (int)(hash01((uint32_t)blk * 2654435761u ^ 0x5D1E1Du) * (float)(SHINE_BLOCK - SHINE_GAP));
+    int age = (int)(frame % SHINE_BLOCK) - start;
+    if (age < 0 || age >= 48) return n;
+    float t = (float)age / 48.0f;
+    /* which: one of the shields in view, picked at random (a third of the time two), when the
+     * glint starts; followed by their X from frame to frame while it runs, as the wall scrolls */
+    static uint64_t pick_blk = UINT64_MAX;
+    static int pick_x[2], npick;
+    if (n == 0) return 0;
+    if (pick_blk != blk) {
+        pick_blk = blk;
+        int a = (int)(hash01((uint32_t)blk * 374761393u ^ 0xA11Cu) * (float)n);
+        if (a >= n) a = n - 1;
+        pick_x[0] = bx0[a];
+        npick = 1;
+        if (n >= 2 && hash01((uint32_t)blk * 668265263u ^ 0x2B0Du) < 0.33f) {
+            int b = (a + 1 + (int)(hash01((uint32_t)blk * 3266489917u) * (float)(n - 1))) % n;
+            pick_x[1] = bx0[b];
+            npick = 2;
+        }
+    }
+    bool lit[MAX_SHIELDS] = {0};
+    for (int k = 0; k < npick; k++) {
+        int best = -1, bd = 9;
+        for (int s = 0; s < n; s++) {
+            int d = abs(bx0[s] - pick_x[k]);
+            if (d < bd) {
+                bd = d;
+                best = s;
+            }
+        }
+        if (best >= 0) {
+            lit[best] = true;
+            pick_x[k] = bx0[best];
+        }
+    }
     for (int s = 0; s < n; s++) {
+        if (!lit[s]) continue;
         float sw = (float)(bx1[s] - bx0[s] + 1), sh = 40.0f;
         for (int y = by0[s]; y < by0[s] + 41 && y < h; y++)
             for (int x = bx0[s] - 2; x <= bx1[s] + 2 && x < w; x++) {
@@ -309,4 +353,246 @@ int torch_glow(const uint32_t *src, uint32_t *dst, int w, int h, int pitch, uint
             }
     }
     return n;
+}
+
+/* Sail sway: the tattered purple sails hanging over Stage 2's docks move in the wind. A sail is
+ * the run of its six purples joined to the picture's top row (so the HUD's purple sub-weapon
+ * icon, not joined to it, stays as it is); each column's bottom is its lowest such pixel. Tall
+ * sails (reaching below SAIL_TALL) sway slowly, their lower part moving most; short ones keep
+ * still and their lower half flutters, quick and small. Where a sail moves off, the night sky
+ * ($000024) shows. Phases go by the level's X, so sails keep their motion as they scroll. */
+#define SAIL_SKY 0xFF000024u
+#define SAIL_TALL 56
+static bool sail_px(uint32_t p)
+{
+    return p == 0xFF48246Du || p == 0xFF480048u || p == 0xFF6D2491u || p == 0xFF9148B6u ||
+           p == 0xFFB66DFFu || p == 0xFF240048u;
+}
+
+int sail_sway(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_x)
+{
+    static uint8_t mask[PCE_FB_MAX_W * PCE_FB_MAX_H];
+    static int stack[PCE_FB_MAX_W * PCE_FB_MAX_H];
+    static uint32_t row[PCE_FB_MAX_W];
+    static const int d4[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    int bot[PCE_FB_MAX_W], tall[PCE_FB_MAX_W];
+    if (w > PCE_FB_MAX_W || h > PCE_FB_MAX_H) return 0;
+    int hh = h < 128 ? h : 128;   /* (sails hang no lower than this) */
+    memset(mask, 0, (size_t)w * (size_t)hh);
+    int sp = 0, n = 0;
+    for (int x = 0; x < w; x++)
+        if (sail_px(img[x])) {
+            mask[x] = 1;
+            stack[sp++] = x;
+        }
+    while (sp) {
+        int q = stack[--sp], qx = q % w, qy = q / w;
+        n++;
+        for (int k = 0; k < 4; k++) {
+            int nx = qx + d4[k][0], ny = qy + d4[k][1];
+            if (nx < 0 || ny < 0 || nx >= w || ny >= hh || mask[ny * w + nx]) continue;
+            if (!sail_px(img[ny * pitch + nx])) continue;
+            mask[ny * w + nx] = 1;
+            stack[sp++] = ny * w + nx;
+        }
+    }
+    if (n < 200) return 0;
+    for (int x = 0; x < w; x++) {
+        bot[x] = -1;
+        for (int y = hh - 1; y >= 0; y--)
+            if (mask[y * w + x]) {
+                bot[x] = y;
+                break;
+            }
+    }
+    /* a sail: columns with sail, gaps of up to 6 joined; tall if any of it reaches SAIL_TALL */
+    for (int x = 0; x < w;) {
+        if (bot[x] < 0) {
+            tall[x] = 0;
+            x++;
+            continue;
+        }
+        int e = x, deep = bot[x];
+        for (int k = x; k < w && k <= e + 6; k++)
+            if (bot[k] >= 0) {
+                e = k;
+                if (bot[k] > deep) deep = bot[k];
+            }
+        for (int k = x; k <= e; k++) tall[k] = deep >= SAIL_TALL;
+        x = e + 1;
+    }
+    float t = (float)(frame % 144) / 144.0f;   /* sway: 2.4 s; flutter twice as quick */
+    for (int y = 0; y < hh; y++) {
+        uint32_t *line = &img[y * pitch];
+        memcpy(row, line, (size_t)w * sizeof *row);
+        for (int x = 0; x < w; x++) {
+            /* the nearest sail column's motion (6 px either side: a moved pixel may come from
+             * just beside its sail) */
+            int c = -1;
+            for (int d = 0; d <= 6 && c < 0; d++) {
+                if (x - d >= 0 && bot[x - d] >= 0) c = x - d;
+                else if (x + d < w && bot[x + d] >= 0) c = x + d;
+            }
+            if (c < 0) continue;
+            float dx;
+            if (tall[c]) {
+                float depth = (float)y / 70.0f;
+                if (depth > 1.0f) depth = 1.0f;
+                dx = 3.0f * sinf(6.2831853f * t + (float)(c + world_x) * 6.2831853f / 400.0f) * depth * sqrtf(depth);
+            } else {
+                int b = -1;
+                for (int k = c - 3; k <= c + 3; k++)
+                    if (k >= 0 && k < w && bot[k] > b) b = bot[k];
+                float half = (float)b * 0.5f, f = half > 0.0f ? ((float)y - half) / half : 0.0f;
+                if (f <= 0.0f) continue;
+                if (f > 1.0f) f = 1.0f;
+                dx = 2.0f * sinf(6.2831853f * 2.0f * t + (float)(x + world_x) / 5.0f) * f;
+            }
+            int sx = x - (int)lroundf(dx);
+            bool from = sx >= 0 && sx < w && mask[y * w + sx], here = mask[y * w + x];
+            if (from) line[x] = row[sx];
+            else if (here) line[x] = SAIL_SKY;
+        }
+    }
+    return 1;
+}
+
+/* Night sky: the stars over Stage 2's docks twinkle faintly, and now and then (rarely) a small,
+ * dim shooting star crosses the sky. A star, as the game draws it: a plus of 3 x 3 pixels on
+ * the night sky ($000024), its middle pale ($B6B691) with dull arms ($6D4848), or (a fainter
+ * one) dull with dark-blue arms ($000048); its corners sky. Each star keeps its own twinkle
+ * (stars are followed from frame to frame, so one keeps its phase as the sky scrolls). Both
+ * are drawn only while at least NS_MIN stars show or did in the last half second (none in a
+ * fade or anywhere else), and the
+ * shooting star only over the sky's own dark blues (behind sails, ropes and the moon). */
+#define NS_MAX 64
+#define NS_MIN 3
+#define NS_STREAK_FRAMES 29      /* a shooting star's flight (about half a second) */
+#define NS_STREAK_LEN 10
+#define NS_STREAK_CHANCE 3600    /* one in this many frames of starry sky: once a minute on average */
+#define NS_STREAK_GAP 1200       /* the least time between two (20 s) */
+static const uint32_t ns_level[5] = {0xFF000024u, 0xFF000048u, 0xFF6D4848u, 0xFFB6B691u, 0xFFFFFFE0u};
+static int ns_force = -1;
+
+void night_sky_streak_at(int frame) { ns_force = frame; }
+
+static uint32_t ns_mix(uint32_t a, uint32_t b, float t)
+{
+    float r = (float)(a >> 16 & 0xFF) + ((float)(b >> 16 & 0xFF) - (float)(a >> 16 & 0xFF)) * t;
+    float g = (float)(a >> 8 & 0xFF) + ((float)(b >> 8 & 0xFF) - (float)(a >> 8 & 0xFF)) * t;
+    float bl = (float)(a & 0xFF) + ((float)(b & 0xFF) - (float)(a & 0xFF)) * t;
+    return 0xFF000000u | (uint32_t)clampf(r) << 16 | (uint32_t)clampf(g) << 8 | (uint32_t)clampf(bl);
+}
+static uint32_t ns_at(float v)
+{
+    if (v < 0.0f) v = 0.0f;
+    if (v > 4.0f) v = 4.0f;
+    int i = (int)v;
+    if (i > 3) i = 3;
+    return ns_mix(ns_level[i], ns_level[i + 1], v - (float)i);
+}
+
+int night_sky(uint32_t *img, int w, int h, int pitch, uint64_t frame)
+{
+    static int px[NS_MAX], py[NS_MAX], np;
+    static float pph[NS_MAX];
+    static uint32_t seq;
+    static uint64_t last_frame = UINT64_MAX, streak_start, streak_end;
+    static bool streak;
+    static float sx0, sy0, svx, svy;
+    int sx[NS_MAX], sy[NS_MAX], sb[NS_MAX], n = 0;
+    float sph[NS_MAX];
+    const uint32_t sky = ns_level[0];
+    for (int y = 1; y < h - 1 && n < NS_MAX; y++)
+        for (int x = 1; x < w - 1 && n < NS_MAX; x++) {
+            uint32_t c = img[y * pitch + x], arm;
+            if (c == ns_level[3]) arm = ns_level[2];
+            else if (c == ns_level[2]) arm = ns_level[1];
+            else continue;
+            if (img[(y - 1) * pitch + x] != arm || img[(y + 1) * pitch + x] != arm ||
+                img[y * pitch + x - 1] != arm || img[y * pitch + x + 1] != arm) continue;
+            if (img[(y - 1) * pitch + x - 1] != sky || img[(y - 1) * pitch + x + 1] != sky ||
+                img[(y + 1) * pitch + x - 1] != sky || img[(y + 1) * pitch + x + 1] != sky) continue;
+            sx[n] = x;
+            sy[n] = y;
+            sb[n] = c == ns_level[3] ? 3 : 2;
+            n++;
+        }
+    /* each star's twinkle phase: the one it had last frame (the nearest within 6 px), or a new one */
+    for (int i = 0; i < n; i++) {
+        int best = -1, bd = 7;
+        for (int j = 0; j < np; j++) {
+            int d = abs(px[j] - sx[i]) + abs(py[j] - sy[i]);
+            if (d < bd) { bd = d; best = j; }
+        }
+        sph[i] = best >= 0 ? pph[best] : hash01(++seq * 2654435761u ^ (uint32_t)frame);
+    }
+    for (int i = 0; i < n; i++) {
+        px[i] = sx[i];
+        py[i] = sy[i];
+        pph[i] = sph[i];
+    }
+    np = n;
+    bool new_frame = frame != last_frame;
+    last_frame = frame;
+    /* (the game blinks its stars itself, swapping their colours every 6 frames: they are found
+     * only while lit, so the sky counts as starry while stars were found in the last 30 frames) */
+    static uint64_t seen_at;
+    static bool seen;
+    if (n >= NS_MIN) {
+        seen = true;
+        seen_at = frame;
+    } else if (!seen || frame - seen_at > 30) {
+        seen = false;
+        streak = false;
+        return 0;
+    }
+    /* twinkle: a quarter of a step either way of the star's own brightness, every 2.4 s */
+    for (int i = 0; i < n; i++) {
+        float v = (float)sb[i] + 0.3f * sinf(6.2831853f * ((float)(frame % 144) / 144.0f + sph[i]));
+        int x = sx[i], y = sy[i];
+        img[y * pitch + x] = ns_at(v);
+        uint32_t a = ns_at(v - 1.0f);
+        img[(y - 1) * pitch + x] = a;
+        img[(y + 1) * pitch + x] = a;
+        img[y * pitch + x - 1] = a;
+        img[y * pitch + x + 1] = a;
+    }
+    /* the shooting star: rare, at a random point of the upper sky, down to the left or right */
+    if (new_frame && !streak && (frame >= streak_end + NS_STREAK_GAP || streak_end == 0)) {
+        bool go = ns_force >= 0 ? frame >= (uint64_t)ns_force
+                                : hash01((uint32_t)frame * 2246822519u ^ 0x51A7u) * NS_STREAK_CHANCE < 1.0f;
+        if (go) {
+            ns_force = -1;
+            float r1 = hash01((uint32_t)frame * 3266489917u), r2 = hash01((uint32_t)frame * 668265263u);
+            float r3 = hash01((uint32_t)frame * 374761393u);
+            streak = true;
+            streak_start = frame;
+            sx0 = (float)w * (0.2f + 0.6f * r1);
+            sy0 = 10.0f + 40.0f * r2;
+            svx = r3 < 0.5f ? -100.0f : 100.0f;
+            svy = 40.0f;
+        }
+    }
+    if (streak) {
+        float u = (float)(frame - streak_start) / (float)NS_STREAK_FRAMES;
+        if (u > 1.0f) {
+            streak = false;
+            streak_end = frame;
+        } else {
+            float fade = powf(sinf(3.14159265f * u), 0.7f), d = sqrtf(svx * svx + svy * svy);
+            float hx = sx0 + svx * u, hy = sy0 + svy * u;
+            for (int i = 0; i < NS_STREAK_LEN; i++) {
+                int x = (int)lroundf(hx - svx / d * (float)i), y = (int)lroundf(hy - svy / d * (float)i);
+                if (x < 0 || y < 0 || x >= w || y >= h) continue;
+                uint32_t p = img[y * pitch + x];
+                int r = p >> 16 & 0xFF, g = p >> 8 & 0xFF, b = p & 0xFF;
+                if (r > 0x24 || g > 0x24 || b < 0x24) continue;   /* (the sky's blues only) */
+                float a = 0.55f * fade * powf(1.0f - (float)i / NS_STREAK_LEN, 1.5f);
+                img[y * pitch + x] = 0xFF000000u | (uint32_t)clampf((float)r + 255.0f * a) << 16 |
+                                     (uint32_t)clampf((float)g + 255.0f * a) << 8 | (uint32_t)clampf((float)b + 224.0f * a);
+            }
+        }
+    }
+    return 1;
 }

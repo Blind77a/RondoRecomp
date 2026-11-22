@@ -101,6 +101,8 @@ static const Item IMPROVE_ITEMS[] = {
     TOGGLE("Alcove glow", alcove_glow, MENU_SETTINGS_CHANGED),
     TOGGLE("Moon glow", moon_glow, MENU_SETTINGS_CHANGED),
     TOGGLE("Shield shine", shield_shine, MENU_SETTINGS_CHANGED),
+    TOGGLE("Sail sway", sail_sway, MENU_SETTINGS_CHANGED),
+    TOGGLE("Night sky", night_sky, MENU_SETTINGS_CHANGED),
     {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
 };
 /* Video > Widescreen (experimental): 16:9 and everything that goes with it (wide.h) */
@@ -225,7 +227,9 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Improvements", "The game's graphics touched up. Only the picture changes: the game plays the same."},
     {"Torch glow", "Wall torches light the bricks round them, their light flickering."},
     {"Candle glow", "Blue-flamed candles glow with a soft, flickering blue halo."},
-    {"Shield shine", "A glint of light runs round the rims of the wall's heraldic shields."},
+    {"Night sky", "The stars over the docks twinkle faintly, and once in a while a small shooting star crosses the sky."},
+    {"Sail sway", "The purple sails over the docks move in the wind: the long ones sway, the short ones flutter."},
+    {"Shield shine", "Now and then (3 to 7 s apart) a glint of light runs round the rim of one of the wall's heraldic shields, now and then two."},
     {"Moon glow", "A faint rim of light round the moon, in the sky round it only."},
     {"Alcove glow", "Torches in the castle's lit alcoves make the alcove's red bricks flicker with their light."},
     {"Widescreen (experimental)", "16:9 and its options: more of the level each side."},
