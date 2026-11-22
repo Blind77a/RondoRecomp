@@ -12,6 +12,7 @@
 #include "pce/state.h"
 #include "../frontend/game.h"
 #include "../frontend/moves.h"
+#include "../frontend/secret.h"
 #include "../frontend/pausemenu.h"
 #include "../frontend/prompt.h"
 #include "../frontend/wide.h"
@@ -190,6 +191,7 @@ int main(int argc, char **argv)
     bool no_native = false, use_script = false, mute_cd = false;
     Press presses[64];
     int n_press = 0;
+    bool secret_on = false;
     struct { long from, to, period; int len; uint8_t mask; } every[16];
     int n_every = 0;
     /* investigation helpers: WRAM watch, pokes, save states, WRAM dumps */
@@ -293,6 +295,7 @@ int main(int argc, char **argv)
             cheats.play_maria = strstr(c, "play-maria") != NULL;
         }
         else if (!strcmp(argv[i], "--skip-cinematics")) skip_cine = true;
+        else if (!strcmp(argv[i], "--secret")) secret_on = true;   /* the Konami code door (secret.h) */
         else if (!strcmp(argv[i], "--moves") && i + 1 < argc) {
             const char *c = argv[++i];
             move_opts.eight_way = strstr(c, "eight") != NULL;
@@ -489,6 +492,7 @@ int main(int argc, char **argv)
         if (pause_menu_on) pce.pad = pause_menu_pad(&pm, &pce, pce.pad, true);
         if (prompt_dev >= 0) prompt_before_frame(&tp, &pce);
         if (wide_off_at && f == wide_off_at) { wd.want = 0; wide_off(&wd, &pce); }
+        if (secret_on) secret_frame(&pce, true);
         wide_frame(&wd, &pce);
         if (wide_edges && wd.shift != last_shift) {   /* --wide-edges: where the picture moves over */
             printf("wide shift %d at frame %ld\n", wd.shift, f);

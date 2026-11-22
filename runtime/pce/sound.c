@@ -321,6 +321,58 @@ static int adpcm_sample(Sound *s)
     return (int)(s->ad_prev + (s->ad_cur - s->ad_prev) * s->ad_phase);
 }
 
+/* ---- the host voice (sound_extra_play) -------------------------------------------- */
+
+static struct {
+    const uint8_t *data;
+    uint32_t len, pos;     /* bytes */
+    bool low, on;
+    int signal, index, prev, cur;
+    double phase, hz;
+} xv;
+
+void sound_extra_play(const uint8_t *data, uint32_t len, uint8_t rate)
+{
+    memset(&xv, 0, sizeof xv);
+    xv.data = data;
+    xv.len = len;
+    xv.hz = 32000.0 / (16 - (rate & 15));
+    xv.on = data && len;
+}
+
+void sound_extra_stop(void) { xv.on = false; }
+
+static int extra_sample(void)
+{
+    if (!xv.on) return 0;
+    xv.phase += xv.hz / SND_RATE;
+    while (xv.phase >= 1.0) {
+        xv.phase -= 1.0;
+        if (xv.pos >= xv.len) {
+            xv.on = false;
+            return 0;
+        }
+        uint8_t b = xv.data[xv.pos];
+        int n = xv.low ? b & 15 : b >> 4;
+        if (xv.low) xv.pos++;
+        xv.low = !xv.low;
+        int st = step_table[xv.index], diff = st >> 3;
+        if (n & 1) diff += st >> 2;
+        if (n & 2) diff += st >> 1;
+        if (n & 4) diff += st;
+        if (n & 8) diff = -diff;
+        xv.signal += diff;
+        if (xv.signal > 2047) xv.signal = 2047;
+        if (xv.signal < -2048) xv.signal = -2048;
+        xv.index += index_adjust[n & 7];
+        if (xv.index < 0) xv.index = 0;
+        if (xv.index > 48) xv.index = 48;
+        xv.prev = xv.cur;
+        xv.cur = xv.signal;
+    }
+    return (int)(xv.prev + (xv.cur - xv.prev) * xv.phase);
+}
+
 /* ---- output ---------------------------------------------------------------------- */
 
 static int16_t clamp16(int v) { return (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v); }
@@ -357,6 +409,7 @@ void sound_advance(Sound *s, uint64_t now)
             r += v * c->amp_r;
         }
         int ad = adpcm_sample(s) * ADPCM_GAIN * s->ad_volume / 256;
+        ad += extra_sample() * ADPCM_GAIN;
         if (l != 0 || r != 0) s->psg_samples++;
         if (s->ad_playing) s->adpcm_samples++;
         if (s->ad_fade_step && (i & 63) == 0) {
