@@ -373,8 +373,10 @@ static Patch patches[N_PATCHES];
  * the code of ours in bank $00 that reads and writes that table and jumps back into it, are
  * moved to whichever layout is loaded: shift_6f bytes on. */
 static int shift_6f = -1;   /* -1: not worked out yet */
+static bool layout_ok;      /* the layout loaded is one the patches fit (layout_6f) */
 static const uint8_t ROOM_START_A[] = {0x82, 0xA9, 0x90, 0x9D, 0x66, 0x3E};   /* A94C (+ shift_6f) */
-static const uint8_t ROOM_START_B[] = {0xA4, 0x45, 0xB9, 0x94, 0xA9, 0x82};   /* A9B1 (+ shift_6f) */
+/* A9B1 (+ shift_6f): LDY $45; LDA $A994,Y (the table's address moves with the code) */
+static uint8_t ROOM_START_B[] = {0xA4, 0x45, 0xB9, 0x94, 0xA9, 0x82};
 static void patches_moved(int shift)
 {
     memcpy(patches, patch_tab, sizeof patches);
@@ -499,6 +501,7 @@ static uint32_t patches_in(Pce *p)
  * are found. */
 static void set_patches(Pce *p, uint32_t mask, bool on)
 {
+    if (on && !layout_ok) mask &= ~WORLD_PATCHES;   /* (a layout of bank $6F the patches do not fit) */
     if (mask & OBJECT_PATCHES) objects_on = on;
     for (int i = 0; i < N_PATCHES; i++) {
         if (!(mask & 1u << i) || (wide_debug_skip & 1u << i)) continue;
@@ -515,17 +518,64 @@ static void set_patches(Pce *p, uint32_t mask, bool on)
 
 /* Which layout of bank $6F is loaded (by its room start's bytes); on a change, what of ours
  * the old layout put in (the code in bank $00) is taken out, and the patches moved. */
+/* Is the scroll code at `sh` bytes on? Its room start, and the streaming table and the
+ * column drawing where the patches expect them (as the game has them, or patched). */
+static bool layout_fits(const uint8_t *b, int sh)
+{
+    if (sh < 0 || sh > 0x1000) return false;
+    const uint8_t *t = b + 0x0780 + sh, *c = b + 0x07A5 + sh;
+    return !memcmp(b + 0x094C + sh, ROOM_START_A, sizeof ROOM_START_A) &&
+           ((t[0] == 0x40 && t[1] == 0xC0) || (t[0] == STREAM && t[1] == 0x100 - STREAM)) &&
+           ((c[0] == 0xBD && c[1] == 0x66 && c[2] == 0x3E) || (c[0] == 0x4C && c[1] == 0x10 && c[2] == 0xFE));
+}
+
+/* Which layout of bank $6F is loaded: the room start found anywhere in the bank, the table
+ * and column drawing checked where they would then stand (most stages: 0; Stage 5's ship:
+ * $390; area $1C's castle: $389). None that fits: the bank is left alone (layout_ok false,
+ * set_patches puts none of the background patches in). On a change, what of ours the old
+ * layout put in is taken out first, and the patches moved. */
 static void layout_6f(Pce *p)
 {
     const uint8_t *b = p->page[0x6F];
     int sh = shift_6f;
-    if (b && !memcmp(b + 0x094C, ROOM_START_A, sizeof ROOM_START_A)) sh = 0;
-    else if (b && !memcmp(b + 0x094C + 0x390, ROOM_START_A, sizeof ROOM_START_A)) sh = 0x390;
-    if (sh < 0) sh = 0;
-    if (sh == shift_6f) return;
-    if (shift_6f >= 0) set_patches(p, WORLD_PATCHES, false);
+    bool ok = false;
+    if (b && sh >= 0 && layout_fits(b, sh)) ok = true;
+    else if (b) {
+        for (int i = 0x094C; i + (int)sizeof ROOM_START_A <= 0x2000 && !ok; i++)
+            if (b[i] == ROOM_START_A[0] && layout_fits(b, i - 0x094C)) {
+                sh = i - 0x094C;
+                ok = true;
+            }
+    }
+    if (!ok && sh < 0) sh = 0;
+    /* (our column drawing in bank $00, made for another layout and left there, as a save
+     * state from another stage holds it, writes into the middle of this layout's code: put
+     * back to the filler, unless this layout's patch jumps to it) */
+    uint8_t *fe = p->page[0x00] ? p->page[0x00] + 0x1E10 : NULL;
+    if (fe && fe[0] == 0x5A && fe[1] == 0xDA && fe[2] == 0xA9 && fe[3] == 0x40 && fe[4] == 0x8D) {
+        Patch cur = patch_tab[2];
+        if (sh != shift_6f || shift_6f < 0) {
+            patches_moved(sh);
+            cur = patches[2];
+            if (shift_6f >= 0) patches_moved(shift_6f);
+        } else {
+            cur = patches[2];
+        }
+        const uint8_t *c = b ? b + 0x07A5 + sh : NULL;
+        bool jumps = ok && c && c[0] == 0x4C && c[1] == 0x10 && c[2] == 0xFE;
+        if (!ok || (memcmp(fe, cur.wide, cur.len) && !jumps)) {
+            memset(fe, 0x60, cur.len);
+            p->cpu.page_gen[0x00]++;
+        }
+    }
+    if (sh == shift_6f && ok == layout_ok) return;
+    if (shift_6f >= 0 && layout_ok) set_patches(p, WORLD_PATCHES, false);
     shift_6f = sh;
+    layout_ok = ok;
     patches_moved(sh);
+    int a = 0xA994 + sh;
+    ROOM_START_B[3] = (uint8_t)a;
+    ROOM_START_B[4] = (uint8_t)(a >> 8);
 }
 
 /* The hit test's four places in bank $6B (see "hit boxes moved by HIT_BIAS"): each stage
@@ -1456,7 +1506,9 @@ static void on_entry(Pce *p, void *ctx)
         return;
     }
     if (p->cpu.mpr[5] != 0x6F || !p->page[0x6F] || pc < 0xA000 || pc >= 0xC000) return;
-    layout_6f(p);
+    /* (the layout as wide_frame last worked it out: worked out here, it searched the bank at
+     * every dispatch point while none fitted) */
+    if (!layout_ok) return;
     int sh = shift_6f < 0 ? 0 : shift_6f;
     if (pc != 0xA94C + sh && pc != 0xA9B1 + sh) return;
     const uint8_t *code = p->page[0x6F] + (pc & 0x1FFF);
