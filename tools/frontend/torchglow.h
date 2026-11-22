@@ -26,6 +26,18 @@ int candle_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int worl
  * docks), only in the sky round it, breathing very slowly. In place; 1 if the moon was found. */
 /* Shield shine (Video > Improvements > Shield shine): the wall of heraldic shields (Stage 2's
  * docks): a glint runs round each shield's rim. In place; returns how many were found. */
+/* Sail sway (Video > Improvements > Sail sway): the purple sails over Stage 2's docks move in
+ * the wind, the tall ones swaying, the short ones' lower halves fluttering. In place; run
+ * before the other passes. 1 if sails were found. */
+int sail_sway(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_x);
+
+/* Night sky (Video > Improvements > Night sky): the stars over Stage 2's docks twinkle
+ * faintly, and rarely (about once a minute of starry sky, at least 20 s apart) a small, dim
+ * shooting star crosses it. In place; run after sail_sway and before moon_glow. 1 if the
+ * starry sky was found. night_sky_streak_at: a shooting star from that frame on (tests). */
+int night_sky(uint32_t *img, int w, int h, int pitch, uint64_t frame);
+void night_sky_streak_at(int frame);
+
 int shield_shine(uint32_t *img, int w, int h, int pitch, uint64_t frame);
 
 int moon_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame);

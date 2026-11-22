@@ -91,9 +91,14 @@ is out).
 
 - **Moon glow** (Video > Improvements, off by default): a faint rim of light round the moon
   (Stage 2's docks), only in the sky round it, breathing very slowly.
-- **Shield shine** (Video > Improvements, off by default): a glint of light runs round the
-  rims of the wall of heraldic shields (Stage 2's docks); the shields' faces are left as they
-  are.
+- **Sail sway** (Video > Improvements, off by default): the tattered purple sails over
+  Stage 2's docks move in the wind: the long ones sway, the short ones' lower edges flutter.
+- **Night sky** (Video > Improvements, off by default): the stars over Stage 2's docks
+  twinkle faintly, and once in a while (about once a minute) a small shooting star crosses
+  the sky.
+- **Shield shine** (Video > Improvements, off by default): now and then (3 to 7 s apart) a
+  glint of light runs round the rim of one of the heraldic shields on Stage 2's docks, picked
+  at random (sometimes two); the shields' faces are left as they are.
 
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
