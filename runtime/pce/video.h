@@ -136,6 +136,13 @@ void vdc_set_side_real(bool on);
  * towards its outer edges, to black at them (widescreen's walls repeated beside a room kept
  * 4:3, so they recede rather than stand as part of the room). */
 void vdc_set_side_fade(bool on);
+/* Background map writes (host-side, like the above): a flag per word of VRAM below
+ * VDC_BAT_WATCH (the map, up to 64 x 64), set when the game writes it (by the data port or
+ * DMA), changed or not, until cleared (widescreen: a column or row drawn again shows as one
+ * even where it writes what was there). */
+#define VDC_BAT_WATCH 0x1000
+const uint8_t *vdc_bat_written(void);
+void vdc_bat_written_clear(void);
 /* Side VRAM (host-side, like the above): beyond the original 256 pixels on one side (-1 left,
  * 1 right), the background drawn from this copy of VRAM (map and tiles) instead, its map read
  * dx[line], dy[line] pixels on from where the scroll points (a line of the picture each);

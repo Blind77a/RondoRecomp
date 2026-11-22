@@ -12,6 +12,12 @@ enum {
     R_DESR = 0x11, R_LENR = 0x12, R_DVSSR = 0x13,
 };
 
+/* Background map cells written since the last vdc_bat_written_clear (host-side; see
+ * video.h), whether or not the value changed */
+static uint8_t bat_written[VDC_BAT_WATCH];
+const uint8_t *vdc_bat_written(void) { return bat_written; }
+void vdc_bat_written_clear(void) { memset(bat_written, 0, sizeof bat_written); }
+
 /* ---- VCE ----------------------------------------------------------------- */
 
 /* Smooth fades (host-side, outside the machine state; see video.h). fade_argb is the
@@ -189,6 +195,7 @@ static void vram_dma(Vdc *d)
     uint32_t len = (uint32_t)d->reg[R_LENR] + 1;
     for (uint32_t i = 0; i < len; i++) {
         if (dst < 0x8000) d->vram[dst] = d->vram[src & 0x7FFF];
+        if (dst < VDC_BAT_WATCH) bat_written[dst] = 1;
         src = (uint16_t)(src + sinc);
         dst = (uint16_t)(dst + dinc);
     }
@@ -232,6 +239,7 @@ void vdc_write(Vdc *d, uint16_t off, uint8_t val)
             break;
         case R_VWR:
             if (d->reg[R_MAWR] < 0x8000) d->vram[d->reg[R_MAWR]] = d->reg[R_VWR];
+            if (d->reg[R_MAWR] < VDC_BAT_WATCH) bat_written[d->reg[R_MAWR]] = 1;
             d->reg[R_MAWR] = (uint16_t)(d->reg[R_MAWR] + vram_inc(d));
             break;
         case R_BYR:

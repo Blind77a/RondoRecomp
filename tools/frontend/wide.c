@@ -501,25 +501,34 @@ static int hit_find(const uint8_t *page, const uint8_t *bytes, int len, int hint
     return -1;
 }
 
-/* Stage objects that remove themselves past a distance of their own, inside the wider
- * picture (found by their code's bytes in the stage's bank $81, like the hit test's). Stage 4's
- * swinging spiked balls on chains (kinds $C4 chain, $C3 ball): each chain piece removes itself
- * at screen X $160 or -$60, 96 px past the 4:3 screen, and the ball goes with it; with the
- * picture reaching 128 px out (Level ends) and the ball swinging some 60 px from its anchor,
- * it vanished in sight. Moved out to +-192 ($1C0 / -$C0) while the picture is wide. */
-static const struct { uint8_t len, at_r, at_l; uint8_t orig[21]; uint8_t wide_r, wide_l; } FAR_SITES[] = {
-    {21, 4, 15, {0xBD, 0xC8, 0x2B, 0xC9, 0x60, 0x90, 0x03, 0x4C, 0x54, 0x40, 0x60,
-                 0xBD, 0xC8, 0x2B, 0xC9, 0xA0, 0xB0, 0x03, 0x4C, 0x54, 0x40}, 0xC0, 0x40},
+/* Stage objects that act at a distance of their own from the 4:3 screen, inside the wider
+ * picture (found by their code's bytes in the stage's banks, like the hit test's):
+ * - Stage 4's swinging spiked balls on chains (bank $81; kinds $C4 chain, $C3 ball): each chain
+ *   piece removes itself at screen X $160 or -$60, 96 px past the 4:3 screen, and the ball goes
+ *   with it; with the picture reaching 128 px out (Level ends) and the ball swinging some 60 px
+ *   from its anchor, it vanished in sight. Moved out to +-192 ($1C0 / -$C0).
+ * - Stage 2's ship (bank $71, kind $BB, 71:D08C): the object that paints a girder's end into
+ *   the background map does so once it is within 64 px of the screen's left (X >= -$40), which
+ *   is the wide picture's left edge: the girder appeared in sight. From -$70 instead (from -$80
+ *   it also painted where the 512 px map holds the room further on: girder tiles left under
+ *   the next part's spiked chairs; -$70 keeps it clear and shows most of the girder early) (it runs at
+ *   any distance: its flags leave out the game's distance gate, 70:A09D). keep_tiles keeps the
+ *   tiles if a column drawn afterwards would put the level's blank cells back.
+ * Both while the picture is wide. */
+static const struct { uint8_t bank, len, at_r, at_l; uint8_t orig[21]; uint8_t wide_r, wide_l; } FAR_SITES[] = {
+    {0x81, 21, 4, 15, {0xBD, 0xC8, 0x2B, 0xC9, 0x60, 0x90, 0x03, 0x4C, 0x54, 0x40, 0x60,
+                       0xBD, 0xC8, 0x2B, 0xC9, 0xA0, 0xB0, 0x03, 0x4C, 0x54, 0x40}, 0xC0, 0x40},
+    {0x71, 16, 13, 13, {0xBD, 0x70, 0x2B, 0x10, 0x0B, 0xC9, 0xFF, 0xD0, 0xF3,
+                        0xBD, 0xC8, 0x2B, 0xC9, 0xC0, 0x90, 0xEC}, 0x90, 0x90},
 };
 #define N_FAR (int)(sizeof FAR_SITES / sizeof FAR_SITES[0])
-static int far_at[N_FAR] = {-1};
+static int far_at[N_FAR] = {-1, -1};
 
 static void far_patches(Pce *p, bool on)
 {
-    uint8_t *page = p->page[0x81];
-    if (!page) return;
-    bool changed = false;
     for (int k = 0; k < N_FAR; k++) {
+        uint8_t *page = p->page[FAR_SITES[k].bank];
+        if (!page) continue;
         uint8_t want[21];
         memcpy(want, FAR_SITES[k].orig, FAR_SITES[k].len);
         want[FAR_SITES[k].at_r] = FAR_SITES[k].wide_r;
@@ -532,9 +541,8 @@ static void far_patches(Pce *p, bool on)
         if (at_ < 0) continue;
         memcpy(page + at_, to, len);
         far_at[k] = at_;
-        changed = true;
+        p->cpu.page_gen[FAR_SITES[k].bank]++;
     }
-    if (changed) p->cpu.page_gen[0x81]++;
 }
 
 /* The game removes objects more than 128 px past its screen (70:A06C: X < -$80, 70:A079:
@@ -982,8 +990,10 @@ static bool keep_on;
 static void keep_reset(void) { keep_on = false; }
 
 /* the level position (8 px units) a map cell stands for: the 512 px from 192 before the
- * camera while it goes left (objects made and columns drawn on that side), from 64 before
- * while it goes right (`before`); rows from 128 px above */
+ * camera while it goes left (objects made and columns drawn on that side), from 112 before
+ * while it goes right (`before`, as rows are drawn, 6F:A8EC; with 64, the girder painted
+ * further left on Stage 2's ship, far_patches, was taken for the place 512 px right, and put
+ * over the chairs there as that column was drawn); rows from 128 px above */
 static int keep_dir;   /* -1 left, 1 right */
 static int keep_pos(int cell, int cam, int map_px, int before)
 {
@@ -1014,14 +1024,20 @@ static void keep_tiles(Pce *p, bool on)
         keep_on = on;
         return;
     }
-    /* cells changed in each column and row: a column or a row drawn changes many at once */
+    /* cells written in each column and row: a column or a row drawn writes many at once,
+     * changed or not (counted by what changed, a row drawn again over the Stage 2 ship's
+     * girder end, a few cells, looked like an object's tiles: the girder's tiles the object
+     * had put there were lost and the blank ones kept, a black gap at the picture's left) */
+    const uint8_t *wr = vdc_bat_written();
     int col_n[KEEP_W] = {0}, row_n[64] = {0};
     for (int row = 0; row < mh; row++)
-        for (int c = 0; c < mw; c++)
-            if (d->vram[row * mw + c] != keep_prev[row * mw + c]) {
+        for (int c = 0; c < mw; c++) {
+            int i = row * mw + c;
+            if ((i < VDC_BAT_WATCH && wr[i]) || d->vram[i] != keep_prev[i]) {
                 col_n[c]++;
                 row_n[row]++;
             }
+        }
     /* most of the map at once (a room drawn again, a save state loaded): start over */
     int total = 0;
     for (int c = 0; c < mw; c++) total += col_n[c];
@@ -1032,7 +1048,7 @@ static void keep_tiles(Pce *p, bool on)
     }
     for (int c = 0; c < mw; c++) {
         if (!col_n[c]) continue;
-        int lx = keep_pos(c, cx, mw * 8, keep_dir < 0 ? 192 : 64);
+        int lx = keep_pos(c, cx, mw * 8, keep_dir < 0 ? 192 : 112);
         /* (the game draws columns and rows in as they come, off its screen; what it draws
          * again on it, as a drawbridge laid down, is its own) */
         bool off_x = lx * 8 + 8 <= cx - 48 || lx * 8 >= cx + 256 + 48;
@@ -1833,6 +1849,7 @@ void wide_frame(Wide *w, Pce *p)
     bool scrolls = room_scrolls(r);
     /* objects' tiles kept from columns drawn over them (keep_tiles) */
     keep_tiles(p, want && s == RONDO_PLAYING && scrolls && w->patched && objects_on);
+    vdc_bat_written_clear();   /* (the next frame's writes, for keep_tiles) */
     /* A boss locks the camera to one screen of a room it scrolled through (Stage 2's: the
      * limits close in on the arena, with no new room): the picture stays wide, the map
      * beside the arena (streamed as the camera came in, and still there) shown, and the
