@@ -75,6 +75,8 @@ is out).
 - **Torch glow** (Video > Improvements, off by default): the wall torches light the bricks
   round them, their light flickering, each torch on its own rhythm (Stage 3's dungeon so
   far: the torches are found by their exact flame and sconce colours).
+- **Candle glow** (Video > Improvements, off by default): the blue-flamed candles get a soft,
+  flickering blue halo round their flames; it goes out with the candle.
 
   ![Torch glow in Stage 3's dungeon](https://github.com/user-attachments/assets/a3401218-e880-45bb-a0c3-947fdf20b589)
 
