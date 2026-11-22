@@ -246,7 +246,8 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            Smooth fades: Off (the default) or on: the game's fades in and out (scenes,
            stages, story text) blend smoothly in full colour instead of in the console's
            8 steps. Only the picture changes; the game plays the same
-           Improvements: a page of graphics touch-ups (only the picture changes):
+           Graphic enhancements: a page of graphics touch-ups (only the picture changes):
+             All effects: On turns every one below on, Off turns them all off
              Torch glow: Off (the default) or on: the wall torches (Stage 3's dungeon)
              light the bricks round them, their light flickering
              Candle glow: Off (the default) or on: the blue-flamed candles get a
@@ -257,7 +258,9 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
              Shield shine: Off (the default) or on: now and then a glint runs round the rim of
              one of the heraldic shields, picked at random (sometimes two)
              Sail sway: Off (the default) or on: the purple sails over the docks
-             move in the wind, the long ones swaying, the short ones fluttering
+             move in the wind, the long ones swaying, the short ones fluttering; on
+             Stage 5's ship the grey sails move too, in a style picked at random each
+             time you get there
              Night sky: Off (the default) or on: the stars over the docks twinkle
              faintly, and once in a while a small shooting star crosses the sky
            Smooth dithering: Off (the default) or on: the checkerboards and patterns of

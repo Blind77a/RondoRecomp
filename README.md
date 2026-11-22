@@ -72,34 +72,39 @@ is out).
 
 ### Picture
 
-- **Torch glow** (Video > Improvements, off by default): the wall torches light the bricks
+Video > Graphic enhancements has an **All effects** switch at its
+top that turns all of its effects (Torch glow to Shield shine below) on or off at once.
+
+- **Torch glow** (Video > Graphic enhancements, off by default): the wall torches light the bricks
   round them, their light flickering, each torch on its own rhythm (Stage 3's dungeon so
   far: the torches are found by their exact flame and sconce colours).
 
   ![Torch glow in Stage 3's dungeon](https://github.com/user-attachments/assets/a3401218-e880-45bb-a0c3-947fdf20b589)
 
-- **Candle glow** (Video > Improvements, off by default): the blue-flamed candles get a soft,
+- **Candle glow** (Video > Graphic enhancements, off by default): the blue-flamed candles get a soft,
   flickering blue halo round their flames; it goes out with the candle.
 
   ![Candle glow in Stage 4](https://github.com/user-attachments/assets/4339bd86-b467-45d7-b541-5c8ada4ef261)
 
-- **Alcove glow** (Video > Improvements, off by default): wall torches in the castle halls'
+- **Alcove glow** (Video > Graphic enhancements, off by default): wall torches in the castle halls'
   painted alcoves, even half behind the wall, make the alcove's red bricks flicker with
   their light; the stone round the alcove is left as it is.
 
   ![Alcove glow in the castle hall](https://github.com/user-attachments/assets/a6d7159c-dd14-4b8f-b76c-8091ad063f46)
 
-- **Moon glow** (Video > Improvements, off by default): a faint rim of light round the moon
+- **Moon glow** (Video > Graphic enhancements, off by default): a faint rim of light round the moon
   (Stage 2's docks), only in the sky round it, breathing very slowly.
-- **Sail sway** (Video > Improvements, off by default): the tattered purple sails over
+- **Sail sway** (Video > Graphic enhancements, off by default): the tattered purple sails over
   Stage 2's docks move in the wind: the long ones sway, the short ones' lower edges flutter.
-- **Night sky** (Video > Improvements, off by default): the stars over Stage 2's docks
+  On Stage 5's ship the grey sails under the yards move too, each on its own, in a style
+  picked at random each time you get there (from a barely-there lean to a storm).
+- **Night sky** (Video > Graphic enhancements, off by default): the stars over Stage 2's docks
   twinkle faintly, and once in a while (about once a minute) a small shooting star crosses
   the sky.
 
   ![Sail sway and Night sky on Stage 2's docks](https://github.com/user-attachments/assets/01108ab8-c202-4dca-bf8e-6d044abff975)
 
-- **Shield shine** (Video > Improvements, off by default): now and then (3 to 7 s apart) a
+- **Shield shine** (Video > Graphic enhancements, off by default): now and then (3 to 7 s apart) a
   glint of light runs round the rim of one of the heraldic shields on Stage 2's docks, picked
   at random (sometimes two); the shields' faces are left as they are.
 
