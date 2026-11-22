@@ -219,6 +219,8 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
              light the bricks round them, their light flickering
              Candle glow: Off (the default) or on: the blue-flamed candles get a
              soft, flickering blue halo
+             Alcove glow: Off (the default) or on: torches in the castle halls' lit
+             alcoves make the alcove's red bricks flicker with their light
 Gameplay   Skip cinematics: Press START, Automatically, or Never. During the logo and
            the intro (the story narration and opening before the title screen), START, A
            or X goes straight to the title screen, the way the game itself allows once it
