@@ -99,6 +99,7 @@ static const Item IMPROVE_ITEMS[] = {
     TOGGLE("Torch glow", torch_glow, MENU_SETTINGS_CHANGED),
     TOGGLE("Candle glow", candle_glow, MENU_SETTINGS_CHANGED),
     TOGGLE("Alcove glow", alcove_glow, MENU_SETTINGS_CHANGED),
+    TOGGLE("Moon glow", moon_glow, MENU_SETTINGS_CHANGED),
     {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
 };
 /* Video > Widescreen (experimental): 16:9 and everything that goes with it (wide.h) */
@@ -223,6 +224,7 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Improvements", "The game's graphics touched up. Only the picture changes: the game plays the same."},
     {"Torch glow", "Wall torches light the bricks round them, their light flickering."},
     {"Candle glow", "Blue-flamed candles glow with a soft, flickering blue halo."},
+    {"Moon glow", "A faint rim of light round the moon, in the sky round it only."},
     {"Alcove glow", "Torches in the castle's lit alcoves make the alcove's red bricks flicker with their light."},
     {"Widescreen (experimental)", "16:9 and its options: more of the level each side."},
     {"Widescreen", "16:9: more of the level each side. Experimental: some rooms stay 4:3; glitches possible."},

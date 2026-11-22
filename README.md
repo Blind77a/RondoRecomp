@@ -89,6 +89,9 @@ is out).
 
   ![Alcove glow in the castle hall](https://github.com/user-attachments/assets/a6d7159c-dd14-4b8f-b76c-8091ad063f46)
 
+- **Moon glow** (Video > Improvements, off by default): a faint rim of light round the moon
+  (Stage 2's docks), only in the sky round it, breathing very slowly.
+
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
 - **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as

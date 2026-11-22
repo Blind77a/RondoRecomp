@@ -1443,7 +1443,7 @@ int main(int argc, char **argv)
             }
             /* Video > Improvements > Torch glow, Candle glow (torchglow.h; only the picture:
              * kept in hardcore), worked out once a game frame like the above */
-            if ((set.torch_glow || set.candle_glow || set.alcove_glow) && !test_mode) {
+            if ((set.torch_glow || set.candle_glow || set.alcove_glow || set.moon_glow) && !test_mode) {
                 static uint32_t tg[PCE_FB_MAX_W * PCE_FB_MAX_H];
                 static uint64_t tg_frame = UINT64_MAX;
                 static int tg_n;
@@ -1454,6 +1454,7 @@ int main(int argc, char **argv)
                         memcpy(&tg[y * PCE_FB_MAX_W], &fb[y * PCE_FB_MAX_W], (size_t)pce.vdc.fb_w * sizeof *tg);
                     tg_n = 0;
                     /* (alcoves first: Torch glow changes the colours they are found by) */
+                    if (set.moon_glow) tg_n += moon_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                     if (set.alcove_glow) tg_n += alcove_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam, set.torch_glow);
                     if (set.torch_glow) tg_n += torch_glow(tg, tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);
                     if (set.candle_glow) tg_n += candle_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);

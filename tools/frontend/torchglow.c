@@ -131,6 +131,54 @@ int alcove_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int worl
     return n;
 }
 
+/* Moon glow: the moon (Stage 2's docks, area $26: a disc about 30 px across in four pale
+ * blues, $91B6DA, $9191FF, $B6DAFF, $6D6DDA, that nothing else on its screens uses) gets a
+ * faint rim of light: the sky's blues (no red or green above $24, blue $24 or more) within
+ * 9 px of its edge lightened a little, breathing very slowly. The mast and posts in front stay
+ * as they are. Its middle and size are the moon pixels' bounds; a moon mostly behind something
+ * (fewer than 120 of its pixels) is left alone. */
+static bool moon_px(uint32_t p)
+{
+    return p == 0xFF91B6DAu || p == 0xFF9191FFu || p == 0xFFB6DAFFu || p == 0xFF6D6DDAu;
+}
+
+int moon_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame)
+{
+    int x0 = w, x1 = -1, y0 = h, y1 = -1, n = 0;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            if (moon_px(img[y * pitch + x])) {
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+                n++;
+            }
+    if (n < 120 || x1 - x0 > 48 || y1 - y0 > 48) return 0;
+    float cx = (float)(x0 + x1) * 0.5f, cy = (float)(y0 + y1) * 0.5f;
+    float r0 = (float)((x1 - x0) > (y1 - y0) ? (x1 - x0) : (y1 - y0)) * 0.5f;
+    float br = 0.95f + 0.05f * sinf((float)(frame % 160) * 6.2831853f / 160.0f);
+    float reach = 9.0f * br;
+    int lx = (int)(cx - r0 - reach) - 1, hx = (int)(cx + r0 + reach) + 1;
+    int ly = (int)(cy - r0 - reach) - 1, hy = (int)(cy + r0 + reach) + 1;
+    if (lx < 0) lx = 0;
+    if (ly < 0) ly = 0;
+    if (hx > w - 1) hx = w - 1;
+    if (hy > h - 1) hy = h - 1;
+    for (int y = ly; y <= hy; y++)
+        for (int x = lx; x <= hx; x++) {
+            uint32_t p = img[y * pitch + x];
+            int r = p >> 16 & 0xFF, g = p >> 8 & 0xFF, b = p & 0xFF;
+            if (r > 0x24 || g > 0x24 || b < 0x24) continue;   /* (the sky's blues only) */
+            float dx = (float)x - cx, dy = (float)y - cy, e = sqrtf(dx * dx + dy * dy) - r0;
+            if (e < 0.0f || e >= reach) continue;
+            float a = (1.0f - e / reach) * (1.0f - e / reach) * 0.22f * br;
+            img[y * pitch + x] = 0xFF000000u | (uint32_t)clampf((float)r + 120.0f * a) << 16 |
+                                 (uint32_t)clampf((float)g + 150.0f * a) << 8 | (uint32_t)clampf((float)b + 190.0f * a);
+        }
+    return 1;
+}
+
 int torch_glow(const uint32_t *src, uint32_t *dst, int w, int h, int pitch, uint64_t frame, int world_x)
 {
     if (src != dst)
