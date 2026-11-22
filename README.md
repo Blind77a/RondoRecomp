@@ -93,19 +93,19 @@ top that turns all of its effects (Torch glow to Shield shine below) on or off a
   ![Alcove glow in the castle hall](https://github.com/user-attachments/assets/a6d7159c-dd14-4b8f-b76c-8091ad063f46)
 
 - **Moon glow** (Video > Graphic enhancements, off by default): a faint rim of light round the moon
-  (Stage 2's docks), only in the sky round it, breathing very slowly.
+  (Stage 5's docks), only in the sky round it, breathing very slowly.
 - **Sail sway** (Video > Graphic enhancements, off by default): the tattered purple sails over
-  Stage 2's docks move in the wind: the long ones sway, the short ones' lower edges flutter.
+  Stage 5's docks move in the wind: the long ones sway, the short ones' lower edges flutter.
   On Stage 5's ship the grey sails under the yards move too, each on its own, in a style
   picked at random each time you get there (from a barely-there lean to a storm).
-- **Night sky** (Video > Graphic enhancements, off by default): the stars over Stage 2's docks
+- **Night sky** (Video > Graphic enhancements, off by default): the stars over Stage 5's docks
   twinkle faintly, and once in a while (about once a minute) a small shooting star crosses
   the sky.
 
-  ![Sail sway and Night sky on Stage 2's docks](https://github.com/user-attachments/assets/01108ab8-c202-4dca-bf8e-6d044abff975)
+  ![Sail sway and Night sky on Stage 5's docks](https://github.com/user-attachments/assets/01108ab8-c202-4dca-bf8e-6d044abff975)
 
 - **Shield shine** (Video > Graphic enhancements, off by default): now and then (3 to 7 s apart) a
-  glint of light runs round the rim of one of the heraldic shields on Stage 2's docks, picked
+  glint of light runs round the rim of one of the heraldic shields on Stage 5's docks, picked
   at random (sometimes two); the shields' faces are left as they are.
 
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
