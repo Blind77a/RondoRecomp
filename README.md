@@ -41,7 +41,9 @@ ISO/WAV/BIN tracks); everything derived from it goes to `work/`, which is git-ig
 - Candle glow (Video > Improvements, off by default): the blue-flamed candles get a soft, flickering blue halo (only the picture changes)
 - Alcove glow (Video > Improvements, off by default): torches in the castle halls' painted alcoves, even half behind the wall, make the alcove's red bricks flicker with their light (only the picture changes)
 - Moon glow (Video > Improvements, off by default): a faint rim of light round the moon on Stage 2's docks (only the picture changes)
-- Shield shine (Video > Improvements, off by default): a glint of light runs round the rims of Stage 2's wall of heraldic shields (only the picture changes)
+- Shield shine (Video > Improvements, off by default): now and then (3 to 7 s apart) a glint of light runs round the rim of one of Stage 2's heraldic shields, picked at random, sometimes two (only the picture changes)
+- Sail sway (Video > Improvements, off by default): Stage 2's purple sails move in the wind, the long ones swaying, the short ones fluttering (only the picture changes)
+- Night sky (Video > Improvements, off by default): the stars over Stage 2's docks twinkle faintly, and about once a minute a small shooting star crosses the sky (only the picture changes)
 - Save stating
 - Cheats
 - Super Castlevania IV moves (Gameplay page): 8-way whipping and dove throwing, and a limp whip, after Pizzano's Super Rondo of Blood hack (RondoRecomp's own version)
