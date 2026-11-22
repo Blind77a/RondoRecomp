@@ -292,6 +292,32 @@ upstream after 1.2 with a camera that stops at the walls and taken out before 1.
   X + 32 negative are dropped at 72:8127, those with X + 32 below a size-dependent bound
   ($81A1,X) at 72:813A.
 
+## Level data: screens, blocks, collision
+
+Seen in Stage 1's first area (area $10, stage block `$DB` = $68); the banks are the stage's
+overlay in CD RAM, so all of it is RAM.
+
+- The level grid at `$1D00` (16 x 16 screens of 256 px) is filled at a room's start from a
+  list at `$9C30 + 2 * $82` (route step; 6B:8882): a grid position, then screen numbers, bit
+  7 on the last of a run (a new position follows), `$FF` ends. The room header comes from
+  `$9C71 + 2 * $83` (6B:8954), 14 bytes: camera X page, Y page, X, Y, camera mode (`$3EB6`),
+  `$3E66`, left page (`$3EBE`), right page (`$3EC6`), top and bottom pages (`$3ECE`,
+  `$3ED6`), the player's X (0: kept) and Y, `$45`, the player's facing (bit 7: kept). The
+  room's object list: `$9D01 + 4 * $83` (pointer, a byte, a flag), 10-byte entries sorted by
+  world X, `$FFFF` ends (read by 69:5E2E). Bank 6B has `$FF` from `$9D25` to its end.
+- A screen (6F:A80F) is 8 x 8 blocks of 32 px: 64 block numbers at `$A9EC + 64 * screen` and
+  their ninth bits, a byte a row, at `$AFEC + 8 * screen`; screen 0 is blank. Stage 1's
+  first area uses screens 1-$17, all there is room for. A block (6F:A000) is 4 x 4 BAT
+  entries, 32 bytes at `$C000 + 32 * (number & $FF)` in bank `$DB + $0B` + its ninth bit.
+  The column routine (6F:A7A5) is the only reader of the grid.
+- Collision is by tile: 6B:967F reads the BAT entry under a point from VRAM and looks its
+  tile number up in a table at `$7D00` (bank $6A): high bits through `$7D00,Y` (bit 7: none),
+  then a byte a tile (0 nothing, 3 floor, ...). So a room laid out from a stage's blocks
+  stands and blocks as the game's own do.
+- Event 3 (leaving the room) with `$8C` = `$80` cuts to the next room (`$82` stepped, `$83` =
+  route[`$82`]) through a dark red picture, as walking off a room's edge; `$8C` = 0 scrolls the
+  camera a screen on instead.
+
 ## Open questions
 
 - [ ] Role of track 22 / second `CD_BASE` (error-retry mirror?) and which track carries the translation

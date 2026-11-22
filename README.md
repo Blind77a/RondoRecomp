@@ -52,6 +52,11 @@ What widescreen also takes care of:
 - A room kept 4:3 beside an area hidden behind breakable blocks shows that area at its side,
   the blocks carried across it, until they break and the picture goes wide (Stage 1).
 
+### Easter egg
+
+There's a door that answers to the Konami code: Up Up Down Down Left Right Left Right B A
+(II I on a PC Engine pad). Off in RetroAchievements hardcore mode.
+
 ### Pause menu
 
 The game's own pause screen (RUN / START) shows a menu in the game's own letters with its
