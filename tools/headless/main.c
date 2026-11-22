@@ -175,6 +175,8 @@ int main(int argc, char **argv)
         return 2;
     }
     long frames = 600, shot_every = 60;
+    bool shield_shots = false;     /* --shield-shine: screenshots with Shield shine */
+    bool moon_shots = false;       /* --moon-glow: screenshots with Moon glow */
     bool alcove_shots = false;     /* --alcove-glow: screenshots with Alcove glow */
     bool candle_shots = false;     /* --candle-glow: screenshots with Candle glow */
     bool torch_shots = false;      /* --torch-glow: screenshots with Torch glow */
@@ -334,6 +336,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--torch-glow")) torch_shots = true;
         else if (!strcmp(argv[i], "--candle-glow")) candle_shots = true;
         else if (!strcmp(argv[i], "--alcove-glow")) alcove_shots = true;
+        else if (!strcmp(argv[i], "--moon-glow")) moon_shots = true;
+        else if (!strcmp(argv[i], "--shield-shine")) shield_shots = true;
         else if (!strcmp(argv[i], "--wide-skip") && i + 1 < argc) {   /* leave patches out: list of indexes */
             char tmp[128];
             snprintf(tmp, sizeof tmp, "%s", argv[++i]);
@@ -612,7 +616,22 @@ int main(int argc, char **argv)
             if (dedither_shots) dedither(pce.vdc.fb, dd, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
             const uint32_t *shot = dedither_shots ? dd : pce.vdc.fb;
             static uint32_t tg[PCE_FB_MAX_W * PCE_FB_MAX_H];
+            if (shield_shots) {
+                if (shot != tg)
+                    for (int y = 0; y < pce.vdc.fb_h; y++)
+                        memcpy(&tg[y * PCE_FB_MAX_W], &shot[y * PCE_FB_MAX_W], (size_t)pce.vdc.fb_w * sizeof *tg);
+                shield_shine(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
+                shot = tg;
+            }
+            if (moon_shots) {
+                if (shot != tg)
+                    for (int y = 0; y < pce.vdc.fb_h; y++)
+                        memcpy(&tg[y * PCE_FB_MAX_W], &shot[y * PCE_FB_MAX_W], (size_t)pce.vdc.fb_w * sizeof *tg);
+                moon_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
+                shot = tg;
+            }
             if (alcove_shots) {
+                if (shot != tg)
                 for (int y = 0; y < pce.vdc.fb_h; y++)
                     memcpy(&tg[y * PCE_FB_MAX_W], &shot[y * PCE_FB_MAX_W], (size_t)pce.vdc.fb_w * sizeof *tg);
                 alcove_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, (pce.wram[0x1E96] & 0x0F) << 8 | pce.wram[0x1E08], false);
