@@ -1755,6 +1755,12 @@ static bool scenery_fill(Pce *p, int cam)
 
 void wide_frame(Wide *w, Pce *p)
 {
+    /* A frame can end with the CPU still in code of ours (a slow frame: the sprite builder,
+     * 72:8000, running on through our pieces in bank $00 at $FA00-$FFFF, mapped at $E000).
+     * Taking the changes out then (as a stage ends: leaving play) put the RTS filler back
+     * under it and the game ran off into the I/O page (after area $1A's orb). Nothing is
+     * changed until it is out of our code; the picture stays as it was for that frame. */
+    if (p->cpu.mpr[7] == 0x00 && p->cpu.pc >= 0xFA00) return;
     uint8_t *r = p->wram;
     uint8_t s = game_state(p);
     /* GAME OVER shown over the frozen level ($31 01-03): drawn as the level was, wide */
