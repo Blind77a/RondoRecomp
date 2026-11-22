@@ -341,6 +341,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--moon-glow")) moon_shots = true;
         else if (!strcmp(argv[i], "--shield-shine")) shield_shots = true;
         else if (!strcmp(argv[i], "--sail-sway")) sail_shots = true;
+        else if (!strcmp(argv[i], "--extra-cpu") && i + 1 < argc) pce_set_extra_cpu(atoi(argv[++i]));   /* Reduce slowdown: lines of extra CPU time */
         else if (!strcmp(argv[i], "--sail-style") && i + 1 < argc) rigging_sway_style(atoi(argv[++i]));   /* the ship's sails: that style */
         else if (!strcmp(argv[i], "--night-sky")) night_shots = true;
         else if (!strcmp(argv[i], "--night-sky-streak") && i + 1 < argc) night_sky_streak_at(atoi(argv[++i]));   /* a shooting star from that frame */

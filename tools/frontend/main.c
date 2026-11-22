@@ -1254,6 +1254,9 @@ int main(int argc, char **argv)
         move_opts = (MoveOptions){set.eight_way && !hardcore && !test_mode, set.limp_whip && !hardcore && !test_mode,
                                   set.sticky_stairs && !hardcore && !test_mode};
         vce_set_smooth_fades(set.smooth_fades && !test_mode);   /* only the picture: kept in hardcore */
+        /* Gameplay > Reduce slowdown: half a frame of extra CPU time a frame (pce.h; it changes how
+         * the game runs: not in hardcore) */
+        pce_set_extra_cpu(set.reduce_slowdown && !hardcore && !test_mode ? 131 : 0);
         {   /* widescreen fills the window's shape, up to 16:9 (off in hardcore mode: it changes
              * the game's code and shows more of the level) */
             int ww, wh;

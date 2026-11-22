@@ -70,6 +70,13 @@ Gameplay > Sticky stairs (off by default): a jump comes down onto stairs without
 whip or no whip during the jump (Up is held for you while coming down, except while the whip
 is out).
 
+### Reduce slowdown
+
+Gameplay > Reduce slowdown (off by default): busy scenes, such as Death's fight with its
+scythes flying and blood splashing, no longer slow down. The game's CPU gets half a frame of
+extra time each frame, the picture and sound waiting meanwhile, so it finishes its frame in
+time; everything else runs as before. Not in RetroAchievements hardcore mode.
+
 ### Picture
 
 Video > Graphic enhancements has an **All effects** switch at its
