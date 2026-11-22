@@ -516,7 +516,7 @@ int main(int argc, char **argv)
                     rigging_sway(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, (pce.wram[0x1E96] & 0x0F) << 8 | pce.wram[0x1E08],
                                  pce.wram[0x1E8E] << 8 | pce.wram[0x1E20], vdc_sprite_pixels(), vdc_behind_pixels());
                 if (night_shots) night_sky(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
-                if (shield_shots) shield_shine(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
+                if (shield_shots && (pce.wram[0xA2] & 0xFE) == 0x26) shield_shine(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);   /* (the docks only, as in the game) */
                 if (moon_shots) moon_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                 shot = tg;
             }

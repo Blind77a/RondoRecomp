@@ -1319,7 +1319,9 @@ int main(int argc, char **argv)
                         tg_n += rigging_sway(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam,
                                              pce.wram[0x1E8E] << 8 | pce.wram[0x1E20], vdc_sprite_pixels(), vdc_behind_pixels());
                     if (set.night_sky) tg_n += night_sky(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
-                    if (set.shield_shine) tg_n += shield_shine(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
+                    /* (the docks' only, area $26/$27: a castle pillar's base is in the shields' rim
+                     * colours, and a glint ran round it) */
+                    if (set.shield_shine && (pce.wram[0xA2] & 0xFE) == 0x26) tg_n += shield_shine(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                     if (set.moon_glow) tg_n += moon_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                     if (set.alcove_glow) tg_n += alcove_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam, set.torch_glow);
                     if (set.torch_glow) tg_n += torch_glow(tg, tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);

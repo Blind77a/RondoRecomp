@@ -134,7 +134,7 @@ int alcove_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int worl
     return n;
 }
 
-/* Moon glow: the moon (Stage 2's docks, area $26: a disc about 30 px across in four pale
+/* Moon glow: the moon (Stage 5's docks, area $26: a disc about 30 px across in four pale
  * blues, $91B6DA, $9191FF, $B6DAFF, $6D6DDA, that nothing else on its screens uses) gets a
  * faint rim of light: the sky's blues (no red or green above $24, blue $24 or more) within
  * 9 px of its edge lightened a little, breathing very slowly. The mast and posts in front stay
@@ -187,7 +187,7 @@ int moon_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame)
     return 1;
 }
 
-/* Shield shine: the wall of heraldic shields (Stage 2's docks, area $26): each shield's olive
+/* Shield shine: the wall of heraldic shields (Stage 5's docks, area $26): each shield's olive
  * rim ($6D6D48, $484824) catches the light as a glint runs round it, now and then (3-7 s apart),
  * on one shield of those in view at random (now and then two). A shield
  * is found by its rim's upper part: a connected run of those two colours some 20-26 px wide
@@ -355,7 +355,7 @@ int torch_glow(const uint32_t *src, uint32_t *dst, int w, int h, int pitch, uint
     return n;
 }
 
-/* Sail sway: the tattered purple sails hanging over Stage 2's docks move in the wind. A sail is
+/* Sail sway: the tattered purple sails hanging over Stage 5's docks move in the wind. A sail is
  * the run of its six purples joined to the picture's top row (so the HUD's purple sub-weapon
  * icon, not joined to it, stays as it is); each column's bottom is its lowest such pixel. Tall
  * sails (reaching below SAIL_TALL) sway slowly, their lower part moving most; short ones keep
@@ -457,7 +457,7 @@ int sail_sway(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_
     return 1;
 }
 
-/* Night sky: the stars over Stage 2's docks twinkle faintly, and now and then (rarely) a small,
+/* Night sky: the stars over Stage 5's docks twinkle faintly, and now and then (rarely) a small,
  * dim shooting star crosses the sky. A star, as the game draws it: a plus of 3 x 3 pixels on
  * the night sky ($000024), its middle pale ($B6B691) with dull arms ($6D4848), or (a fainter
  * one) dull with dark-blue arms ($000048); its corners sky. Each star keeps its own twinkle
