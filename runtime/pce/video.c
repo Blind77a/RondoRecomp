@@ -206,10 +206,16 @@ void vdc_set_side_tiles(const uint16_t *left, const uint16_t *right)
     side_right = right;
 }
 const uint16_t *vdc_row_map_y(void) { return row_map_y; }
+static uint8_t sprite_px[PCE_FB_MAX_W * PCE_FB_MAX_H];
+const uint8_t *vdc_sprite_pixels(void) { return sprite_px; }
+static uint32_t behind_px[PCE_FB_MAX_W * PCE_FB_MAX_H];
+const uint32_t *vdc_behind_pixels(void) { return behind_px; }
 static bool side_real;
 void vdc_set_side_real(bool on) { side_real = on; }
 static bool side_fade;
 void vdc_set_side_fade(bool on) { side_fade = on; }
+static bool side_flip;
+void vdc_set_side_flip(bool on) { side_flip = on; }
 static const uint16_t *map_fill;
 void vdc_set_map_fill(const uint16_t *fill) { map_fill = fill; }
 static const uint16_t *side_vram;
@@ -325,12 +331,14 @@ static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out, int line)
             uint16_t f = map_fill[(py >> 3) * VDC_FILL_W + ((px >> 3) & (VDC_FILL_W - 1))];
             if (f != VDC_SIDE_NONE) e = f;
         }
+        bool flip = false;
         if (sides) {
             int col = (sx + x) >> 3;   /* (arithmetic shift: floor) */
             int k = col < first ? first - 1 - col : col > last ? col - last - 1 : -1;
             if (k >= VDC_SIDE_TILES) k = VDC_SIDE_TILES - 1;
             if (side_real && col >= 0 && col < mw) k = -1;   /* the map's own, short of wrapping round */
             if (k >= 0) {
+                flip = side_flip;
                 e = col < first ? sl[k] : sr[k];
                 if (e == VDC_SIDE_NONE) {
                     out[x] = 0;
@@ -340,7 +348,7 @@ static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out, int line)
         }
         uint32_t base = ((uint32_t)(e & 0x7FF) * 16 + prow) & 0x7FFF;
         uint16_t p01 = v[base], p23 = v[(base + 8) & 0x7FFF];
-        int bit = 7 - (px & 7);
+        int bit = flip ? (px & 7) : 7 - (px & 7);   /* (side flip: the tile drawn mirrored) */
         int c = ((p01 >> bit) & 1) | ((p01 >> (8 + bit)) & 1) << 1 |
                 ((p23 >> bit) & 1) << 2 | ((p23 >> (8 + bit)) & 1) << 3;
         out[x] = c ? (uint16_t)((e >> 12) << 4 | c) : 0;
@@ -444,9 +452,14 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line)
     uint32_t *dst = &d->fb[row * PCE_FB_MAX_W];
     const uint32_t *pal = vce->argb;
     if ((row & 15) == 0) memcpy(line_pal[row >> 4], pal, sizeof line_pal[0]);   /* (vdc_line_palette) */
+    uint8_t *spx = &sprite_px[row * PCE_FB_MAX_W];
+    uint32_t *bhx = &behind_px[row * PCE_FB_MAX_W];
     for (int x = 0; x < w; x++) {
         uint16_t s = sp[x];
-        if (s && ((s & 0x8000) || !bg[x])) dst[x] = pal[s & 0x1FF];
+        spx[x] = s && ((s & 0x8000) || !bg[x]);
+        /* (behind: a sprite's pixel the background hides, else the background colour) */
+        bhx[x] = s && !spx[x] ? pal[s & 0x1FF] : pal[0];
+        if (spx[x]) dst[x] = pal[s & 0x1FF];
         else if (bg[x]) dst[x] = pal[bg[x]];
         else dst[x] = pal[0];
     }
@@ -461,6 +474,7 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line)
         for (int x = 0; x < w; x++) {
             if (x >= c0 && x < c1) continue;
             uint16_t s = sp[x];
+            spx[x] = s != 0;
             dst[x] = s ? pal[s & 0x1FF] : 0xFF000000u;
         }
         /* side fade: darker towards the picture's outer edges, black at them */

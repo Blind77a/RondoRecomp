@@ -53,7 +53,7 @@ static const uint8_t RTS_FILLER[96] = {
 /* (patches without a varying byte leave var and var_at out: 0) */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-static const Patch patches[] = {
+static const Patch patch_tab[] = {
     /* Background streaming (bank $6F, the scroll-layer code; every layer and both axes
      * use it): when the camera crosses a 32-pixel column, the game draws the column 64
      * pixels past the edge it is moving towards. The table holds that distance (low
@@ -362,7 +362,41 @@ static const Patch patches[] = {
 #define PARKED_TABLE 0x1E80   /* bank $00 offset ($FE80): a byte per object slot, 1 = parked */
 #define HIT_BIAS 0x1ED8       /* bank $00 offset ($FED8): 16-bit screen X the hit test's 256 pixels start at */
 #define ECHO_TABLE 0x1CC0     /* bank $00 offset ($FCC0): a byte per object slot, 1 = echoed */
-#define N_PATCHES (int)(sizeof patches / sizeof patches[0])
+#define N_PATCHES (int)(sizeof patch_tab / sizeof patch_tab[0])
+/* The patches as they apply to the code loaded now (patch_tab moved to the layout of bank
+ * $6F the stage has: see layout_6f) */
+static Patch patches[N_PATCHES];
+
+/* Bank $6F, the scroll-layer code, comes in two layouts: most stages' (its room start at
+ * $A94C), and Stage 5's ship's (area $32, Death), where the same code stands $390 bytes
+ * further on ($ACDC), the streaming table at $AB10 instead of $A780. The patches to it, and
+ * the code of ours in bank $00 that reads and writes that table and jumps back into it, are
+ * moved to whichever layout is loaded: shift_6f bytes on. */
+static int shift_6f = -1;   /* -1: not worked out yet */
+static const uint8_t ROOM_START_A[] = {0x82, 0xA9, 0x90, 0x9D, 0x66, 0x3E};   /* A94C (+ shift_6f) */
+static const uint8_t ROOM_START_B[] = {0xA4, 0x45, 0xB9, 0x94, 0xA9, 0x82};   /* A9B1 (+ shift_6f) */
+static void patches_moved(int shift)
+{
+    memcpy(patches, patch_tab, sizeof patches);
+    for (int i = 0; i < N_PATCHES; i++) {
+        Patch *q = &patches[i];
+        if (q->bank == 0x6F) q->off = (uint16_t)(q->off + shift);
+        else if (!(q->bank == 0x00 && q->off == 0x1E10)) continue;   /* ("column drawing at both distances") */
+        /* addresses in the table's code: $A780, $A781 (the table) and $A7A8 (back into the
+         * column drawing) */
+        for (int k = 0; k + 1 < q->len; k++)
+            for (int which = 0; which < 2; which++) {
+                uint8_t *b = which ? q->wide : q->orig;
+                if (which == 0 && !q->orig[0]) continue;   /* (RTS filler) */
+                if (b[k + 1] == 0xA7 && (b[k] == 0x80 || b[k] == 0x81 || b[k] == 0xA8)) {
+                    int a = (0xA700 | b[k]) + shift;
+                    b[k] = (uint8_t)a;
+                    b[k + 1] = (uint8_t)(a >> 8);
+                }
+            }
+    }
+}
+static void layout_6f(Pce *p);
 #define N_WORLD 8          /* patches[0..7] change how the room's background is streamed into
                             * the map (put in or out as a room starts) */
 #define WORLD_PATCHES ((1u << N_WORLD) - 1)
@@ -477,6 +511,21 @@ static void set_patches(Pce *p, uint32_t mask, bool on)
             p->cpu.page_gen[q->bank]++;   /* recompiled code in this bank is re-checked */
         }
     }
+}
+
+/* Which layout of bank $6F is loaded (by its room start's bytes); on a change, what of ours
+ * the old layout put in (the code in bank $00) is taken out, and the patches moved. */
+static void layout_6f(Pce *p)
+{
+    const uint8_t *b = p->page[0x6F];
+    int sh = shift_6f;
+    if (b && !memcmp(b + 0x094C, ROOM_START_A, sizeof ROOM_START_A)) sh = 0;
+    else if (b && !memcmp(b + 0x094C + 0x390, ROOM_START_A, sizeof ROOM_START_A)) sh = 0x390;
+    if (sh < 0) sh = 0;
+    if (sh == shift_6f) return;
+    if (shift_6f >= 0) set_patches(p, WORLD_PATCHES, false);
+    shift_6f = sh;
+    patches_moved(sh);
 }
 
 /* The hit test's four places in bank $6B (see "hit boxes moved by HIT_BIAS"): each stage
@@ -957,8 +1006,6 @@ static bool room_scrolls(const uint8_t *r)
 
 /* The two routines that draw a room when it starts (6F:A94C, 6F:A9B1; checked by their
  * first bytes). The game has just loaded the room's header, camera limits included. */
-static const uint8_t ROOM_START_A[] = {0x82, 0xA9, 0x90, 0x9D, 0x66, 0x3E};   /* A94C */
-static const uint8_t ROOM_START_B[] = {0xA4, 0x45, 0xB9, 0x94, 0xA9, 0x82};   /* A9B1 */
 
 /* Called at every dispatch point (Pce.on_entry): when a room starts, put the background
  * changes in for rooms the camera scrolls sideways through, and take them out for every
@@ -1400,6 +1447,7 @@ static void beyond_door(Wide *w, Pce *p, uint8_t s, int cam, int ext)
 static void on_entry(Pce *p, void *ctx)
 {
     uint16_t pc = p->cpu.pc;
+    if (shift_6f < 0) layout_6f(p);   /* (the patches set up before anything uses them) */
     if (pc == 0x8000 && p->cpu.mpr[4] == 0x72 && p->page[0x72]) {
         edge_spawns_at_build(ctx, p);
         door_ghost(p, ((Wide *)ctx)->want);   /* (the door's copy made in the frame it goes) */
@@ -1407,9 +1455,12 @@ static void on_entry(Pce *p, void *ctx)
         hud_at_build(ctx, p);
         return;
     }
-    if ((pc != 0xA94C && pc != 0xA9B1) || p->cpu.mpr[5] != 0x6F || !p->page[0x6F]) return;
+    if (p->cpu.mpr[5] != 0x6F || !p->page[0x6F] || pc < 0xA000 || pc >= 0xC000) return;
+    layout_6f(p);
+    int sh = shift_6f < 0 ? 0 : shift_6f;
+    if (pc != 0xA94C + sh && pc != 0xA9B1 + sh) return;
     const uint8_t *code = p->page[0x6F] + (pc & 0x1FFF);
-    if (memcmp(code, pc == 0xA94C ? ROOM_START_A : ROOM_START_B, 6)) return;
+    if (memcmp(code, pc == 0xA94C + sh ? ROOM_START_A : ROOM_START_B, 6)) return;
     Wide *w = ctx;
     const uint8_t *r = p->wram;
     bool scrolls = room_scrolls(r);
@@ -1536,9 +1587,26 @@ static bool menu_sides(Pce *p, int ext)
 /* Rooms kept 4:3 (one screen wide: boss rooms, vertical shafts) have nothing of theirs past
  * the 256 pixels: each side shows the room mirrored at that edge, fading to black towards
  * the picture's outer edge (vdc_set_side_fade), so it reads as the room going on into the
- * dark rather than more of it to play in. Only for a picture with one sideways scroll;
+ * dark rather than more of it to play in; each tile is drawn flipped (vdc_set_side_flip),
+ * so the sides are the room's exact mirror image. Only for a picture with one sideways scroll;
  * sprites stay in the 256 pixels (side tiles). */
-static bool room_sides(Pce *p)
+/* Rooms whose sky is not mirrored (SKY_ROOMS): only what runs right across the room, the
+ * floor and railing and the mountains' skyline, is mirrored beside it; the sky shows plain
+ * beside the rest, so yards, sails, spars and ropes crossing it inside the room are not
+ * repeated at its sides (see room_sides). Stage 5's ship below Death's mast (area $32, room
+ * 0: one screen wide, kept 4:3, while Richter climbs). */
+static const struct { uint8_t area, room; uint16_t sky; } SKY_ROOMS[] = {
+    {0x32, 0x00, 0x110},   /* (its sky: tile $110; guessed as the commonest tile shown, it was the
+                            * clouds' with the mountains in view, and everything was mirrored) */
+};
+static int sky_room(const uint8_t *r)
+{
+    for (size_t i = 0; i < sizeof SKY_ROOMS / sizeof SKY_ROOMS[0]; i++)
+        if (r[AREA] == SKY_ROOMS[i].area && r[ROOM] == SKY_ROOMS[i].room) return SKY_ROOMS[i].sky;
+    return 0;
+}
+
+static bool room_sides(Pce *p, int sky)
 {
     static const int map_w[4] = {32, 64, 128, 128};
     const Vdc *d = &p->vdc;
@@ -1549,11 +1617,95 @@ static bool room_sides(Pce *p)
     for (int y = 1; y < rows; y++)
         if (rs[y] != rs[0]) return false;
     int first = rs[0] >> 3, last = (rs[0] + 255) >> 3;
+    uint16_t sky_e = (uint16_t)sky;   /* (SKY_ROOMS) the room's plain sky tile */
+    /* (SKY_ROOMS) which rows are mirrored: bands of rows with something besides sky in the
+     * two columns at the room's edges; a band is mirrored (both sides) only if it reaches
+     * both of the room's edges, as the floor and railing and the mountains' skyline do (a row
+     * whose edge falls between two peaks is mirrored with the rest, so the skyline is whole).
+     * Everything else, a yard or sail crossing one edge or none, the sky and the stars, shows
+     * the room's sky beside it (each row's own sky entry: rows give the tile palettes of
+     * their own). */
+    bool mirror_row[64];
+    for (int r = 0; r < 64; r++) mirror_row[r] = !sky;
+    if (sky) {
+        bool busy[64] = {false}, at_l[64] = {false}, at_r[64] = {false};
+        for (int r = 0; r < mh; r++)
+            for (int k = 0; k < 2; k++) {   /* (the two columns at each edge: a rope passing
+                                              * near an edge does not join bands up) */
+                bool nl = (d->vram[r * mw + ((first + k) & (mw - 1))] & 0x7FF) != sky_e;
+                bool nr = (d->vram[r * mw + ((last - k) & (mw - 1))] & 0x7FF) != sky_e;
+                busy[r] |= nl || nr;
+                if (k == 0) at_l[r] = nl, at_r[r] = nr;
+            }
+        /* (round the map: it loops as the camera climbs, and a band can cross its seam;
+         * started at a row of sky, so no band is cut in two) */
+        int s0 = 0;
+        while (s0 < mh && busy[s0]) s0++;
+        if (s0 == mh) {   /* (no row of sky alone: all mirrored) */
+            for (int r = 0; r < mh; r++) mirror_row[r] = true;
+        } else {
+            /* (a band's rows keep the decision they first had on screen, remembered by their
+             * place in the level: off-screen rows of the map are redrawn as the game scrolls,
+             * which turned a band's decision over and over, the mirror popping in and out as
+             * Richter climbed) */
+            static int8_t memo[1024];
+            static int memo_key = -1, memo_cam = -100000;
+            const uint8_t *wr = p->wram;
+            int cam_y = wr[0x1E8E] << 8 | wr[0x1E20];
+            int key = wr[0xA2] << 8 | wr[0x83];
+            if (key != memo_key || cam_y - memo_cam > 64 || memo_cam - cam_y > 64) memset(memo, -1, sizeof memo);
+            memo_key = key;
+            memo_cam = cam_y;
+            const uint16_t *my = vdc_row_map_y();
+            bool on[64] = {false};
+            int wrow[64];
+            for (int y = 0; y < rows; y++) on[(my[y] & (mh * 8 - 1)) >> 3] = true;
+            /* (each map row stands for the level's rows a whole map height apart: the one
+             * from 4 rows above the camera on, so a row keeps its number as the camera moves) */
+            int start = (cam_y >> 3) - 4;
+            for (int r = 0; r < mh; r++) wrow[r] = (start + (((r - start) % mh) + mh) % mh) & 1023;
+            for (int i = 0; i < mh;) {
+                if (!busy[(s0 + i) % mh]) {
+                    i++;
+                    continue;
+                }
+                int n = 0;
+                bool el = false, er = false;
+                int known = -1;
+                while (i + n < mh && busy[(s0 + i + n) % mh]) {
+                    int r = (s0 + i + n) % mh;
+                    el |= at_l[r];
+                    er |= at_r[r];
+                    if (on[r] && memo[wrow[r]] >= 0) known = memo[wrow[r]];
+                    n++;
+                }
+                bool m = known >= 0 ? known != 0 : el && er;
+                for (int k = 0; k < n; k++) {
+                    int r = (s0 + i + k) % mh;
+                    mirror_row[r] = m;
+                    if (on[r] && memo[wrow[r]] < 0) memo[wrow[r]] = (int8_t)m;
+                }
+                i += n;
+            }
+        }
+    }
+    uint16_t sky_row_e = sky_e;   /* (the last row's own sky entry) */
     for (int r = 0; r < 64; r++) {
         uint16_t *l = &side_l[r * VDC_SIDE_TILES], *rt = &side_r[r * VDC_SIDE_TILES];
+        if (r < mh && !mirror_row[r]) {
+            for (int c = first; c <= last; c++) {
+                uint16_t e = d->vram[r * mw + (c & (mw - 1))];
+                if ((e & 0x7FF) == sky_e) {
+                    sky_row_e = e;
+                    break;
+                }
+            }
+            for (int k = 0; k < VDC_SIDE_TILES; k++) l[k] = rt[k] = sky_row_e;
+            continue;
+        }
         for (int k = 0; k < VDC_SIDE_TILES; k++) {
             /* the room mirrored at its edges: column first-1-k is column first+k, last+1+k
-             * is last-k (the tiles themselves are not flipped: the hardware cannot) */
+             * is last-k (each tile drawn flipped by vdc_set_side_flip: an exact mirror) */
             l[k] = r < mh ? d->vram[r * mw + ((first + k) & (mw - 1))] : VDC_SIDE_NONE;
             rt[k] = r < mh ? d->vram[r * mw + ((last - k) & (mw - 1))] : VDC_SIDE_NONE;
         }
@@ -1777,6 +1929,7 @@ void wide_frame(Wide *w, Pce *p)
      * under it and the game ran off into the I/O page (after area $1A's orb). Nothing is
      * changed until it is out of our code; the picture stays as it was for that frame. */
     if (p->cpu.mpr[7] == 0x00 && p->cpu.pc >= 0xFA00) return;
+    layout_6f(p);
     uint8_t *r = p->wram;
     uint8_t s = game_state(p);
     /* GAME OVER shown over the frozen level ($31 01-03): drawn as the level was, wide */
@@ -1809,8 +1962,16 @@ void wide_frame(Wide *w, Pce *p)
      * area $1A's door: limits $200-$200 as it starts, $200-$280 after) was taken as one screen
      * at its start (on_entry) and drawn 4:3 with Room sides: the changes are put in now, in
      * its first frames, while it is still being put up */
+    /* ... and one kept to a screen for a while that opens later on (Stage 5's ship: the
+     * deck below Death's mast is one screen, $400-$400, until Richter jumps up to the
+     * crow's nest, when it opens to $100-$600 for the fight, with no new room): the changes
+     * go in as it opens. (The game streams columns 64 px past the screen's edges as ever,
+     * so the sides already hold the room when it goes wide.) */
+    static bool locked_before;
+    bool opens_late = locked_before && room_scrolls(r);
+    locked_before = s == RONDO_PLAYING && !room_scrolls(r);
     if (w->room_age < 255) w->room_age++;
-    if (want && s == RONDO_PLAYING && w->room_age <= LATE_OPEN && room_scrolls(r) &&
+    if (want && s == RONDO_PLAYING && (w->room_age <= LATE_OPEN || opens_late) && room_scrolls(r) &&
         (patches_in(p) & WORLD_PATCHES) != WORLD_PATCHES)
         set_patches(p, WORLD_PATCHES | OBJECT_PATCHES, true);
     uint32_t in = patches_in(p);
@@ -1907,9 +2068,10 @@ void wide_frame(Wide *w, Pce *p)
     }
     /* a room kept 4:3 in play: mirrored beside it, fading out (room_sides; Video > Room
      * sides) */
-    bool walls = !show && !menu && want && w->room_sides && s == RONDO_PLAYING && mw >= 1 && room_sides(p);
+    bool walls = !show && !menu && want && w->room_sides && s == RONDO_PLAYING && mw >= 1 && room_sides(p, sky_room(r));
     vdc_set_side_tiles(menu || walls ? side_l : NULL, menu || walls ? side_r : NULL);
     vdc_set_side_fade(walls);
+    vdc_set_side_flip(walls);   /* (the mirror exact: each tile flipped too) */
     /* a menu sliding over to another page (its scroll moved in the last few frames): the
      * pages themselves across the whole picture (vdc_set_side_real) */
     {
@@ -2269,6 +2431,7 @@ void wide_frame(Wide *w, Pce *p)
 
 void wide_off(Wide *w, Pce *p)
 {
+    if (shift_6f < 0) layout_6f(p);
     far_patches(p, false);
     remove_patch(p, false);
     if (walk_lo >= 0) {   /* (an arena made walkable: its own limits back) */
@@ -2285,6 +2448,7 @@ void wide_off(Wide *w, Pce *p)
     vdc_set_side_tiles(NULL, NULL);
     vdc_set_side_real(false);
     vdc_set_side_fade(false);
+    vdc_set_side_flip(false);
     vdc_set_side_vram(NULL, 0, NULL, NULL);
     vdc_set_map_fill(NULL);
     vdc_set_sprite_move(0, -1, 0);
@@ -2298,6 +2462,7 @@ void wide_off(Wide *w, Pce *p)
 
 int wide_report(Pce *p, char *out, int n)
 {
+    if (shift_6f < 0) layout_6f(p);
     int used = 0;
     for (int i = 0; i < N_PATCHES && used < n; i++) {
         const Patch *q = &patches[i];

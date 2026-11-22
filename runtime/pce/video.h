@@ -129,6 +129,10 @@ void vdc_set_side_real(bool on);
  * towards its outer edges, to black at them (widescreen's walls repeated beside a room kept
  * 4:3, so they recede rather than stand as part of the room). */
 void vdc_set_side_fade(bool on);
+/* Side flip (host-side, like the above): side tiles drawn mirrored left to right, which the
+ * hardware cannot do; with the side tiles holding the room's columns in mirrored order, the
+ * sides are the room's exact mirror image (widescreen's Room sides). */
+void vdc_set_side_flip(bool on);
 /* Background map writes (host-side, like the above): a flag per word of VRAM below
  * VDC_BAT_WATCH (the map, up to 64 x 64), set when the game writes it (by the data port or
  * DMA), changed or not, until cleared (widescreen: a column or row drawn again shows as one
@@ -144,6 +148,13 @@ void vdc_bat_written_clear(void);
  * graphics were loaded). */
 void vdc_set_side_vram(const uint16_t *vram, int side, const int16_t *dx, const int16_t *dy);
 const uint16_t *vdc_row_map_y(void);
+/* Sprite pixels (host-side, like the above): 1 where the last picture shows a sprite's pixel
+ * (in front of the background, or over its colour 0), PCE_FB_MAX_W a row (graphic
+ * enhancements: telling the background's scenery from sprites drawn over it). */
+const uint8_t *vdc_sprite_pixels(void);
+/* ... and what is behind the background at each pixel: the colour of a sprite it hides there,
+ * else the background colour (what would show if the background's pixel were taken away). */
+const uint32_t *vdc_behind_pixels(void);
 /* Map fill (host-side, like the above): background map entries drawn instead of the map's
  * own beside the original 256 pixels, by map position: fill[row * VDC_FILL_W + column]
  * (64 rows), VDC_SIDE_NONE for the map's own. For scenery the game drew only as far as its
