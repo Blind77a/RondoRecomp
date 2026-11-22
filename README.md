@@ -39,6 +39,7 @@ ISO/WAV/BIN tracks); everything derived from it goes to `work/`, which is git-ig
 - Full suite of video options including filters and screen effects
 - Save stating
 - Cheats
+- A pause menu on the game's own pause screen (RUN / START): CONTINUE, SAVE & END (saves your progress without using a continue) and, with Maria unlocked, PLAYER CHANGE, in the game's own letters and heart cursor read from your disc
 - Super Castlevania IV moves (Gameplay page): 8-way whipping and dove throwing, and a limp whip, after Pizzano's Super Rondo of Blood hack (RondoRecomp's own version)
 - RetroAchievements
 - Portable mode: tick Portable in Setup (or make a `user` folder next to `rondo.exe` or the AppImage) and options, saves and states are kept there

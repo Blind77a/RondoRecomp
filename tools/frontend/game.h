@@ -93,6 +93,12 @@ static inline bool game_power_on_skippable(const Pce *p)
 static inline void game_allow_power_on_skip(Pce *p) { p->wram[RONDO_SEEN_INTRO] = p->wram[RONDO_SEEN_LOGO] = 1; }
 static inline bool game_playing(const Pce *p) { return game_state(p) == RONDO_PLAYING; }
 
+/* Save the game's progress to its backup RAM file as its own GAME OVER > SAVE & END does
+ * (69:53E1: the score added to the file's total, the progress record $1F40-$1F56 copied in,
+ * written back through the System Card's file routines), without the continue it counts.
+ * NULL when saved, else why not (not in a stage, no save file in use, no file). */
+const char *game_save_progress(Pce *p);
+
 void game_watch_reset(GameWatch *w, const Pce *p);
 /* Call after every emulated frame. */
 void game_apply_cheats(Pce *p, const GameCheats *c, GameWatch *w);
