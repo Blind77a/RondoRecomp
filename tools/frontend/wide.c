@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "game.h"
 
@@ -564,6 +565,7 @@ int wide_extent(double window_aspect, double picture_aspect)
 #define OBJ_XH 0x0B70
 #define OBJ_FACING 0x0AC0    /* 0 = facing right (the hit test turns boxes round by it) */
 #define OBJ_TYPE 0x0A10
+#define OBJ_LAYER 0x0F38     /* & $7F: the scroll layer the object moves with (0 = the camera) */
 #define HUD_SLOT 0x57        /* the HUD (health, hearts, score): type 5, screen X 8 */
 #define SUBWEAPON_SLOT 0x56  /* the sub-weapon icon hanging from the HUD: type 3, screen X 28 */
 #define OBJ_FRAME 0x0A68     /* sprite frame drawn; 0 = none */
@@ -1005,13 +1007,34 @@ static int edge_shift(int left, int right, int ext);
  * back to 0 as the camera goes on (a pixel for a pixel), so it is 0 by the time the next
  * part's limits come in (with none, the picture jumped by the whole extra width then).
  * keep: the shift is this frame's (kept as the one at the limit). */
+/* Leaving through a door (or off a room's edge, $31 = 03): as it starts, the game loads the
+ * next part's graphics into VRAM over tiles the room left behind uses, and then draws the
+ * next part into the map. The picture beyond the original 256 pixels on the side away from
+ * the door shows the room left behind, which 4:3 never shows by then: with those tiles
+ * replaced it broke up (the chapel's left door: the upper right went dark). So VRAM is
+ * copied every frame while playing, the copy kept as the leaving starts, and that side is
+ * drawn from it (vdc_set_side_vram): the room as it was, still. The side toward the door
+ * shows the part coming in. The side is the one Richter stands on as the leaving starts. */
+static int leave_side;          /* -1 left, 1 right, 0 not leaving */
+static uint16_t leave_vram[0x8000];
+
+/* how far the camera is past a room's limits: > 0 past the right one, < 0 past the left, 0
+ * within them (measured directly within them: a room 2048 px wide put its right end, by the
+ * wrapped distance, 2048 px left of its left one, and the picture jumped there) */
+static int past_limits(int cam, int lo, int hi)
+{
+    if (cam >= lo && cam <= hi) return 0;
+    int right = (cam - hi) & 0xFFF, left = (lo - cam) & 0xFFF;
+    return right <= left ? right : -left;
+}
+
 static int picture_shift(Wide *w, const uint8_t *r, int cam, int left, int right, int ext, bool keep)
 {
     if (!ext || !w->edges) return 0;
     if (!room_scrolls(r)) return edge_shift(left, right, ext);   /* (a boss's lock: walls kept) */
     int lo = limit_lo(r), hi = limit_hi(r), beyond = 0;
-    if (wrap(cam - hi) > 0) beyond = wrap(cam - hi);
-    else if (wrap(cam - lo) < 0) beyond = -wrap(cam - lo);
+    int past = past_limits(cam, lo, hi);
+    beyond = past > 0 ? past : -past;
     if (beyond > 0) {
         int b = w->inside_shift;
         return b < 0 ? (b + beyond < 0 ? b + beyond : 0) : (b - beyond > 0 ? b - beyond : 0);
@@ -1038,10 +1061,268 @@ static void hud_at_build(Wide *w, Pce *p)
     w->build_seen = true;
 }
 
+/* Edge spawns (see wide_frame): where an object the game makes at x, 16 / 24 / 32 px past an
+ * edge of its screen, is put instead (x itself if anywhere else). */
+static int edge_spawn_to(int x, int ext, int shift)
+{
+    int to = x;
+    if (x == -16 || x == -24 || x == -32) {
+        int d = -x + ext - shift;
+        to = -(d < EDGE_SPAWN_MAX ? d : EDGE_SPAWN_MAX);
+        if (to > x) to = x;
+    } else if (x == 256 + 16 || x == 256 + 24 || x == 256 + 32) {
+        int d = x - 256 + ext + shift;
+        to = 256 + (d < EDGE_SPAWN_MAX ? d : EDGE_SPAWN_MAX);
+        if (to < x) to = x;
+    }
+    return to;
+}
+static bool edge_batch[OBJ_SLOTS];   /* made with two or more others in one frame: left alone */
+
+/* ---- the door behind Richter -----------------------------------------------------------
+ * Past a door (kind $99) the camera scrolls a screen on with the door still drawn, then the
+ * next room starts and the game clears the objects: the door is gone. 4:3 shows a few
+ * pixels of it at the edge by then; the wider picture shows all of it, gone at once. So its
+ * last look is kept as a picture: the door's object copied into a free slot as kind 0 with
+ * its sprite frame, which the game leaves alone and draws (as it does the HUD), moved with
+ * the camera here and let go once off the picture (or the slot is taken, or the room
+ * changes again). Not a door: kind 0 runs no code. */
+#define DOOR_KIND 0x99
+#define DOOR_TYPE 0x05   /* a door's (and so its copy's) type */
+#define OBJ_ARRAYS 55                 /* the object arrays, $2750-$3A37, a byte per slot each */
+static uint8_t door_copy[OBJ_ARRAYS]; /* the door's slot as last seen while leaving */
+static int door_cam = -1;             /* the camera then (-1: none) */
+static int door_lo, door_hi;          /* the room's limits then */
+static uint8_t door_room;             /* ... and the room */
+static int ghost = -1;                /* the slot holding the copy */
+static uint8_t ghost_frame;
+static int ghost_world;               /* its X in the level: the camera + its screen X */
+static int ghost_world_y;             /* ... and its Y (up a stair the camera moves up) */
+#define OBJ_YL 0x0CD0
+#define OBJ_YH 0x0C78
+static int cam_y_of(const uint8_t *r) { return (r[CAM_Y_PAGE] & 0x0F) << 8 | r[CAM_Y]; }
+
+/* The door's look: the sprite patterns its pieces use (the sprite table entries round the
+ * door's place as the game last drew it), summed. A next room with graphics of its own loads
+ * its patterns over them: the copy would be junk (the chapel's door past the stairs room's
+ * start), so it is let go once they no longer sum the same. */
+static uint16_t door_pats[32];
+static int n_door_pats;
+static uint32_t door_look;
+
+static void door_patterns(const Pce *p, int x, int y)
+{
+    n_door_pats = 0;
+    for (int k = 0; k < 64 && n_door_pats < 32; k++) {
+        const uint16_t *e = &p->vdc.satb[k * 4];
+        int sy = (e[0] & 0x3FF) - 64, sx = (e[1] & 0x3FF) - 32;
+        if (sx < x - 48 || sx > x + 48 || sy < y - 96 || sy > y + 48) continue;
+        int w = (e[3] & 0x100) ? 2 : 1, h = ((e[3] >> 12) & 3) == 0 ? 1 : ((e[3] >> 12) & 3) == 1 ? 2 : 4;
+        int pat = (e[2] >> 1) & 0x3FF;
+        if (w == 2) pat &= ~1;
+        if (h == 2) pat &= ~2;
+        if (h == 4) pat &= ~6;
+        for (int dy = 0; dy < h && n_door_pats < 32; dy++)
+            for (int dx = 0; dx < w && n_door_pats < 32; dx++) door_pats[n_door_pats++] = (uint16_t)(pat + dy * 2 + dx);
+    }
+}
+
+static uint32_t door_patterns_sum(const Pce *p)
+{
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < n_door_pats; i++)
+        for (int k = 0; k < 64; k++) h = (h ^ p->vdc.vram[(door_pats[i] * 64 + k) & 0x7FFF]) * 16777619u;
+    return h;
+}
+
+/* the copy put where it stands for the camera now (wide_frame, and as the sprites are built,
+ * when the game has moved its camera for the frame) */
+static void ghost_place(Pce *p)
+{
+    uint8_t *r = p->wram;
+    if (ghost < 0 || r[OBJ_KIND + ghost] || r[OBJ_FRAME + ghost] != ghost_frame) return;
+    int cam = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL];
+    int x = wrap(ghost_world - cam), y = wrap(ghost_world_y - cam_y_of(r));
+    r[OBJ_XL + ghost] = (uint8_t)x;
+    r[OBJ_XH + ghost] = (uint8_t)(x >> 8);
+    r[OBJ_YL + ghost] = (uint8_t)y;
+    r[OBJ_YH + ghost] = (uint8_t)(y >> 8);
+}
+
+static void door_ghost(Pce *p, int ext)
+{
+    uint8_t *r = p->wram;
+    int cam = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL];
+    bool playing = game_state(p) == RONDO_PLAYING;
+    /* a copy a save state holds (made before it was saved: our record of it, its place and
+     * its look, is not in the state): removed, or it would stay put on the screen, maybe
+     * drawn with another room's patterns. Only the slots copies go into; kind 0 drawn there
+     * with a door's type is only ever ours. */
+    if (ghost < 0 && playing)
+        for (int i = 0x53; i >= 0x10; i--)
+            if (!r[OBJ_KIND + i] && r[OBJ_FRAME + i] && r[OBJ_TYPE + i] == DOOR_TYPE) r[OBJ_FRAME + i] = 0;
+    /* the copy kept: moved with the camera, let go off the picture or when taken */
+    if (ghost >= 0) {
+        bool ours = !r[OBJ_KIND + ghost] && r[OBJ_FRAME + ghost] == ghost_frame;
+        ghost_place(p);
+        int x = wrap(ghost_world - cam);
+        bool off = x < -ext - 64 || x > 256 + ext + 64;
+        /* (kept while leaving too: made as the old room's objects go, before $31 is 01) */
+        bool gone = off || !playing || (r[0x31] != 0x01 && r[0x31] != 0x03) || r[ROOM] != door_room || !ext ||
+                    (n_door_pats && door_patterns_sum(p) != door_look);
+        /* (a room with a door of its own there, as the boss room past Stage 2's tower door
+         * has: the copy steps aside, not drawn twice) */
+        for (int i = 0x10; i < 0x54 && !gone; i++) {
+            int xi = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8);
+            if (i != ghost && r[OBJ_KIND + i] == DOOR_KIND && r[OBJ_FRAME + i] && xi - x < 24 && x - xi < 24) gone = true;
+        }
+        if (ours && gone) r[OBJ_FRAME + ghost] = 0;
+        if (!ours || gone) ghost = -1;
+    }
+    if (!playing || !ext) {
+        door_cam = -1;
+        return;
+    }
+    /* leaving through a door ($31 = 03): its look and the camera, every frame */
+    bool door_there = false;
+    for (int i = 0x10; i < 0x54; i++) door_there |= r[OBJ_KIND + i] == DOOR_KIND && r[OBJ_FRAME + i];
+    if (r[0x31] == 0x03 && (door_cam < 0 || r[ROOM] == door_room)) {
+        /* (the room number changes a frame or two before the leaving ends: the door as seen
+         * in the room it belongs to is kept) */
+        for (int i = 0x10; i < 0x54; i++)
+            if (r[OBJ_KIND + i] == DOOR_KIND && r[OBJ_FRAME + i]) {
+                for (int k = 0; k < OBJ_ARRAYS; k++) door_copy[k] = r[OBJ_KIND + k * OBJ_SLOTS + i];
+                door_cam = cam;
+                door_patterns(p, (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8), (int16_t)(r[OBJ_YL + i] | r[OBJ_YH + i] << 8));
+                door_look = door_patterns_sum(p);
+                door_lo = limit_lo(r);
+                door_hi = limit_hi(r);
+                door_room = r[ROOM];
+            }
+        return;
+    }
+    /* the next room started (its number in, the old room's objects gone, $31 still 03 for a
+     * frame: the copy made then, or the door was missing for that frame): the copy put where
+     * the door stands now. The camera had gone on to a screen past the limit it left by
+     * (hi + 256 or lo - 256): that screen is the new room's. */
+    if (door_cam >= 0 && ghost < 0 && r[ROOM] != door_room && (r[0x31] == 0x01 || (r[0x31] == 0x03 && !door_there))) {
+        int target = past_limits(door_cam, door_lo, door_hi) > 0 ? door_hi + 256 : door_lo - 256;
+        int x = (int16_t)(door_copy[(OBJ_XL - OBJ_KIND) / OBJ_SLOTS] |
+                          door_copy[(OBJ_XH - OBJ_KIND) / OBJ_SLOTS] << 8) - wrap(target - door_cam);
+        int slot = -1;
+        for (int i = 0x53; i >= 0x10 && slot < 0; i--)
+            if (!r[OBJ_KIND + i] && !r[OBJ_FRAME + i]) slot = i;
+        if (slot >= 0 && x > -ext - 64 && x < 256 + ext + 64) {
+            for (int k = 0; k < OBJ_ARRAYS; k++) r[OBJ_KIND + k * OBJ_SLOTS + slot] = door_copy[k];
+            r[OBJ_KIND + slot] = 0;
+            r[OBJ_XL + slot] = (uint8_t)x;
+            r[OBJ_XH + slot] = (uint8_t)(x >> 8);
+            ghost = slot;
+            ghost_frame = r[OBJ_FRAME + slot];
+            ghost_world = cam + x;
+            ghost_world_y = cam_y_of(r) + (int16_t)(r[OBJ_YL + slot] | r[OBJ_YH + slot] << 8);
+            door_room = r[ROOM];
+        }
+        door_cam = -1;
+    }
+    if (r[0x31] == 0x01) door_cam = -1;
+}
+
+/* As the game starts building its sprites (72:8000): objects made this frame at an edge
+ * spawn's place, with a sprite already, moved out before they are drawn (wide_frame would
+ * move them only before the next frame, after one frame shown inside the picture: the castle
+ * hall's kind-31 creatures popped in at 272). Same rules as wide_frame's. */
+static void edge_spawns_at_build(Wide *w, Pce *p)
+{
+    uint8_t *r = p->wram;
+    if (!w->edge_live || game_state(p) != RONDO_PLAYING) return;
+    int born = 0;
+    for (int i = 0; i < OBJ_SLOTS; i++) born += r[OBJ_KIND + i] && !w->obj_kind[i];
+    for (int i = 0; i < OBJ_SLOTS; i++) {
+        uint8_t kind = r[OBJ_KIND + i];
+        bool first = kind && r[OBJ_FRAME + i] && !(kind == w->obj_kind[i] && w->obj_shown[i]);
+        bool batch = w->obj_kind[i] ? edge_batch[i] : born >= 3;
+        if (!first || batch || (r[OBJ_FLAGS + i] & 1) || i == HUD_SLOT || i == SUBWEAPON_SLOT) continue;
+        int x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8), to = edge_spawn_to(x, w->active, w->shift);
+        if (to != x) {
+            r[OBJ_XL + i] = (uint8_t)to;
+            r[OBJ_XH + i] = (uint8_t)(to >> 8);
+        }
+    }
+}
+
+/* ---- past a door into a new room ---------------------------------------------------------
+ * Some doors start the next room with no room start (no new map: the camera has scrolled a
+ * screen on, and the room number and limits change). Past the new room's walls the picture
+ * then shows what the map held there: the part just left (calm: no black). With the same
+ * graphics that is the room behind the door, as it was. A new room with graphics of its own
+ * (the castle hall into the brick cellar) draws those map cells with its tiles and palettes:
+ * junk. So the strips beside the screen the camera is scrolling to (the new room's, ext a
+ * side; the one past the new room's wall) are summed as they are while leaving (map cells, their tiles and palettes), and
+ * when the new room's limits come, a strip that no longer sums the same is black after all
+ * (calm_black). */
+static uint32_t leave_sum;
+static int leave_to = -1;   /* the screen the camera scrolls to while leaving (-1 none) */
+static uint8_t leave_room;
+
+static uint32_t strip_sum(Pce *p, int from, int n)
+{
+    static const int map_w[4] = {32, 64, 128, 128};
+    const Vdc *d = &p->vdc;
+    int mw = map_w[(d->reg[9] >> 4) & 3], mh = (d->reg[9] & 0x40) ? 64 : 32;
+    uint32_t h = 2166136261u;
+    for (int c = from >> 3; c < (from + n + 7) >> 3; c++)
+        for (int row = 0; row < mh; row++) {
+            uint16_t e = d->vram[row * mw + (c & (mw - 1))];
+            h = (h ^ e) * 16777619u;
+            const uint16_t *t = &d->vram[((e & 0x7FF) * 16) & 0x7FFF];
+            for (int i = 0; i < 16; i++) h = (h ^ t[i]) * 16777619u;
+            for (int i = 0; i < 16; i++) h = (h ^ p->vce.pal[((e >> 12) * 16 + i) & 511]) * 16777619u;
+        }
+    return h;
+}
+
+static bool leave_right;    /* leaving by the right (the strip left of the screen scrolled to) */
+
+static uint32_t strips_sum(Pce *p, int to, int ext)
+{
+    return leave_right ? strip_sum(p, to - ext, ext) : strip_sum(p, to + 256, ext);
+}
+
+static void beyond_door(Wide *w, Pce *p, uint8_t s, int cam, int ext)
+{
+    const uint8_t *r = p->wram;
+    if (s != RONDO_PLAYING || !ext) {
+        leave_to = -1;
+        return;
+    }
+    if (r[0x31] == 0x03 && (leave_to < 0 || r[ROOM] == leave_room)) {
+        int lo = limit_lo(r), hi = limit_hi(r), to = -1;
+        int past = past_limits(cam, lo, hi);
+        if (past > 0) to = (hi + 256) & 0xFFF;
+        else if (past < 0) to = (lo - 256) & 0xFFF;
+        if (to >= 0) {
+            leave_right = past > 0;
+            leave_to = to;
+            leave_room = r[ROOM];
+            leave_sum = strips_sum(p, to, ext);
+        }
+        return;
+    }
+    /* in the new room, while calm: black once the strips are not what they were */
+    if (w->calm && !w->calm_black && leave_to >= 0 && r[ROOM] != leave_room &&
+        strips_sum(p, leave_to, ext) != leave_sum)
+        w->calm_black = true;
+    if (!w->calm && r[0x31] == 0x01) leave_to = -1;
+}
+
 static void on_entry(Pce *p, void *ctx)
 {
     uint16_t pc = p->cpu.pc;
     if (pc == 0x8000 && p->cpu.mpr[4] == 0x72 && p->page[0x72]) {
+        edge_spawns_at_build(ctx, p);
+        door_ghost(p, ((Wide *)ctx)->want);   /* (the door's copy made in the frame it goes) */
+        ghost_place(p);
         hud_at_build(ctx, p);
         return;
     }
@@ -1410,6 +1691,8 @@ void wide_frame(Wide *w, Pce *p)
 {
     uint8_t *r = p->wram;
     uint8_t s = game_state(p);
+    /* GAME OVER shown over the frozen level ($31 01-03): drawn as the level was, wide */
+    if (s == RONDO_GAME_OVER && r[RONDO_SUB] >= 0x01 && r[RONDO_SUB] <= 0x03) s = RONDO_PLAYING;
     bool want = w->want > 0;
 
     if (!p->on_entry) {
@@ -1506,10 +1789,13 @@ void wide_frame(Wide *w, Pce *p)
      * row; then kept, with the last sides that filled, through a while they do not (a page
      * of the menu sliding over: its frames reach the edges), so it does not flick back */
     bool menu = false;
-    if (!show && want && w->menus && (s == RONDO_TITLE || s == RONDO_SAVE_MENU)) {
+    if (!show && want && w->menus && (s == RONDO_TITLE || s == RONDO_SAVE_MENU || s == RONDO_GAME_OVER)) {
         bool good = menu_sides(p, ext);
         if (good) {
             w->menu_good = w->menu_good < MENU_FRAMES ? w->menu_good + 1 : MENU_FRAMES;
+            /* (the continue screen comes straight from the wide level: wide at once, not
+             * after MENU_FRAMES of 4:3) */
+            if (s == RONDO_GAME_OVER) w->menu_good = MENU_FRAMES;
             w->menu_bad = 0;
         } else if (w->menu_good >= MENU_FRAMES && ++w->menu_bad > MENU_HOLD) {
             w->menu_good = 0;
@@ -1592,6 +1878,34 @@ void wide_frame(Wide *w, Pce *p)
         find_rows(r, st < -32 || st > 32 ? 0 : st);
         align_rows(r);
     }
+    /* Objects that move with a scenery layer (OBJ_LAYER not 0: Stage 2's boss's figure on its
+     * tower, kind $A7, in the half-speed layer) made further out than the game makes them
+     * (Spawn distance: Far) moved with their layer from then on, at its speed and not the
+     * camera's, and came into view off where the game puts them (the figure 25 px off its
+     * tower: made 50 px of camera earlier, half of that). While beyond the game's own spawn
+     * lines (camera + $140 / - $40), where the 4:3 game has not made them yet, they keep
+     * their place in the level (move with the camera); from there on, with their layer. */
+    {
+        static int last_lx[8];
+        static bool lx_seen;
+        int lx[8];
+        for (int k = 0; k < 8; k++) lx[k] = (r[CAM_PAGE + k] & 0x0F) << 8 | r[CAM_XL + k];
+        int cd = wrap(lx[0] - last_lx[0]);
+        if (lx_seen && s == RONDO_PLAYING && objects_on && cd >= -32 && cd <= 32)
+            for (int i = 0x10; i < 0x54; i++) {
+                int layer = r[OBJ_LAYER + i] & 0x7F, prev = w->obj_x[i];
+                if (!r[OBJ_KIND + i] || r[OBJ_KIND + i] != w->obj_kind[i] || (r[OBJ_FLAGS + i] & 1) || !layer ||
+                    layer > 7 || (prev <= 0x140 && prev >= -0x40))
+                    continue;
+                int ld = wrap(lx[layer] - last_lx[layer]);
+                if (ld < -32 || ld > 32 || ld == cd) continue;
+                int x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8) - (cd - ld);
+                r[OBJ_XL + i] = (uint8_t)x;
+                r[OBJ_XH + i] = (uint8_t)(x >> 8);
+            }
+        memcpy(last_lx, lx, sizeof lx);
+        lx_seen = true;
+    }
     for (int i = 0; i < OBJ_SLOTS; i++) {
         int16_t x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8);
         w->obj_still[i] = x == w->obj_x[i] ? (uint8_t)(w->obj_still[i] < 255 ? w->obj_still[i] + 1 : 255) : 0;
@@ -1651,13 +1965,47 @@ void wide_frame(Wide *w, Pce *p)
         if (w->lim_seen && (lo != w->lim_lo || hi != w->lim_hi) && !all_black && !walk) {
             w->calm = true;
             w->calm_cam = cam;
+            w->calm_black = false;
         }
         w->lim_lo = lo;
         w->lim_hi = hi;
         w->lim_seen = true;
     }
     if (w->calm && (wrap(cam - w->calm_cam) >= 128 || wrap(cam - w->calm_cam) <= -128)) w->calm = false;
+    beyond_door(w, p, s, cam, ext);
     int shift = scrolls ? picture_shift(w, r, drawn, left, right, ext, true) : 0;
+    /* leaving through a door: the side away from it drawn from VRAM as it was (leave_vram) */
+    {
+        /* (the scroll of the last picture drawn; as the leaving starts the game moves the
+         * screen to another place in the map, copying only its 256 pixels: a jump in the
+         * scroll is followed in the copy, the camera's steps are not) */
+        static uint16_t last_x[PCE_FB_MAX_H], last_y[PCE_FB_MAX_H];
+        static int16_t leave_dx[PCE_FB_MAX_H], leave_dy[PCE_FB_MAX_H];
+        const uint16_t *bx = vdc_row_scroll(), *by = vdc_row_map_y();
+        if (s == RONDO_PLAYING && r[0x31] == 0x03 && ext && scrolls) {
+            if (!leave_side) {
+                leave_side = (int16_t)(r[OBJ_XL] | r[OBJ_XH] << 8) < 128 ? -1 : 1;
+                memset(leave_dx, 0, sizeof leave_dx);
+                memset(leave_dy, 0, sizeof leave_dy);
+            }
+            for (int y = 0; y < PCE_FB_MAX_H; y++) {
+                int jx = (bx[y] - last_x[y] + 512) & 511, jy = (by[y] - last_y[y] + 512) & 511;
+                if (jx > 256) jx -= 512;
+                if (jy > 256) jy -= 512;
+                if (jx > 32 || jx < -32 || jy > 32 || jy < -32) {
+                    leave_dx[y] = (int16_t)(leave_dx[y] - jx);
+                    leave_dy[y] = (int16_t)(leave_dy[y] - jy);
+                }
+            }
+            vdc_set_side_vram(leave_vram, -leave_side, leave_dx, leave_dy);
+        } else {
+            leave_side = 0;
+            vdc_set_side_vram(NULL, 0, NULL, NULL);
+            if (s == RONDO_PLAYING && ext && scrolls) memcpy(leave_vram, p->vdc.vram, sizeof leave_vram);
+        }
+        memcpy(last_x, bx, sizeof last_x);
+        memcpy(last_y, by, sizeof last_y);
+    }
     if (!scrolls) w->inside_shift = 0;
     vdc_set_wide_shift(shift);
     w->shift = shift;
@@ -1705,32 +2053,25 @@ void wide_frame(Wide *w, Pce *p)
     /* (objects a room's start makes all at once, from its list, are where the level has
      * them: one may stand at -16 by chance, as Stage 3's chains do, and was moved onto the
      * next. Made three or more in a frame: not moved.) */
-    static bool batch[OBJ_SLOTS];
+    /* (also done as the game starts building its sprites, edge_spawns_at_build: one made
+     * with its sprite during a frame was drawn where the game put it for that frame, a
+     * pop-in inside the picture's edge, before being moved here) */
+    w->edge_live = ext && s == RONDO_PLAYING && scrolls && !walk;
     {
         int born = 0;
         for (int i = 0; i < OBJ_SLOTS; i++) born += r[OBJ_KIND + i] && !w->obj_kind[i];
         for (int i = 0; i < OBJ_SLOTS; i++)
-            if (r[OBJ_KIND + i] && !w->obj_kind[i]) batch[i] = born >= 3;
-            else if (!r[OBJ_KIND + i]) batch[i] = false;
+            if (r[OBJ_KIND + i] && !w->obj_kind[i]) edge_batch[i] = born >= 3;
+            else if (!r[OBJ_KIND + i]) edge_batch[i] = false;
     }
     for (int i = 0; i < OBJ_SLOTS; i++) {
         uint8_t kind = r[OBJ_KIND + i];
         bool first = kind && r[OBJ_FRAME + i] && !(kind == w->obj_kind[i] && w->obj_shown[i]);
         w->obj_kind[i] = kind;
         w->obj_shown[i] = kind && r[OBJ_FRAME + i];
-        if (!first || batch[i] || !ext || s != RONDO_PLAYING || !scrolls || walk || (r[OBJ_FLAGS + i] & 1) ||
-            i == HUD_SLOT || i == SUBWEAPON_SLOT)
+        if (!first || edge_batch[i] || !w->edge_live || (r[OBJ_FLAGS + i] & 1) || i == HUD_SLOT || i == SUBWEAPON_SLOT)
             continue;
-        int x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8), to = x;
-        if (x == -16 || x == -24 || x == -32) {
-            int d = -x + ext - shift;
-            to = -(d < EDGE_SPAWN_MAX ? d : EDGE_SPAWN_MAX);
-            if (to > x) to = x;
-        } else if (x == 256 + 16 || x == 256 + 24 || x == 256 + 32) {
-            int d = x - 256 + ext + shift;
-            to = 256 + (d < EDGE_SPAWN_MAX ? d : EDGE_SPAWN_MAX);
-            if (to < x) to = x;
-        }
+        int x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8), to = edge_spawn_to(x, ext, shift);
         if (to != x) {
             r[OBJ_XL + i] = (uint8_t)to;
             r[OBJ_XH + i] = (uint8_t)(to >> 8);
@@ -1782,8 +2123,11 @@ void wide_frame(Wide *w, Pce *p)
     }
 
     /* scenery bands carried on beside the picture (scenery_fill) */
-    bool filled = ext && show && scrolls && !walk && s == RONDO_PLAYING && scenery_fill(p, cam);
+    bool filled = !getenv("NOFILL") && ext && show && scrolls && !walk && s == RONDO_PLAYING && scenery_fill(p, cam);
     vdc_set_map_fill(filled ? scenery : NULL);
+
+    /* the door just come through kept in the wider picture (door_ghost) */
+    door_ghost(p, w->want);   /* (the wanted width: a room's first frames are drawn 4:3) */
 
     p->vdc.wide = ext;
     if (menu) {
@@ -1801,7 +2145,7 @@ void wide_frame(Wide *w, Pce *p)
         if (p->vdc.wide_x1 < orig + 256) p->vdc.wide_x1 = orig + 256;
         /* (nor while settling past a door: beyond the next part's wall is the part just
          * left, drawn as the game had it) */
-        if (w->calm || (room_scrolls(r) && (wrap(drawn - limit_lo(r)) < 0 || wrap(drawn - limit_hi(r)) > 0))) {
+        if ((w->calm && !w->calm_black) || (room_scrolls(r) && past_limits(drawn, limit_lo(r), limit_hi(r)))) {
             p->vdc.wide_x0 = 0;
             p->vdc.wide_x1 = 256 + 2 * ext;
         }
@@ -1809,6 +2153,12 @@ void wide_frame(Wide *w, Pce *p)
         p->vdc.wide_x0 = 0;
         p->vdc.wide_x1 = 256 + 2 * ext;
     }
+    /* Leaving through a door (or off a room's edge, $31 = 03): the game draws the part beyond
+     * it into the map before and while it scrolls there, and the 512-pixel map holds that
+     * part's columns where the picture shows the other side, beyond the original 256 pixels
+     * away from the door (the chapel's left door: the upper right went black, the next
+     * part's dark top). That side is black while leaving; the side toward the door shows the
+     * part coming in. The side is the one Richter stands on as the leaving starts. */
     /* (the HUD is put again as its sprites are built: hud_at_build) */
     /* (beside a room's repeated walls no sprites are drawn: the HUD stays in the 256) */
     if (s == RONDO_PLAYING) place_hud(p, walls ? 0 : ext - shift, walls ? 0 : ext + shift);
@@ -1832,6 +2182,7 @@ void wide_off(Wide *w, Pce *p)
     vdc_set_side_tiles(NULL, NULL);
     vdc_set_side_real(false);
     vdc_set_side_fade(false);
+    vdc_set_side_vram(NULL, 0, NULL, NULL);
     vdc_set_map_fill(NULL);
     vdc_set_sprite_move(0, -1, 0);
     w->shift = 0;

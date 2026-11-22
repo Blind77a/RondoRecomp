@@ -197,6 +197,16 @@ work; the line at the bottom of the menu says what the selected item does. Menu,
 screen comes back to it. Gameplay, Start screen at launch: Off goes straight into the
 game (rondo.exe --play does that once).
 
+Pause menu
+----------
+The game's pause screen (RUN / START) shows CONTINUE and SAVE & END, in the game's own
+letters with its heart cursor (read from your disc). Up / Down choose, RUN or Jump confirms.
+CONTINUE (the default) carries on. SAVE & END saves your progress the way GAME OVER's SAVE
+& END does (cleared stages and the score total), without using a continue, and goes to the
+start screen.
+With Maria unlocked there is PLAYER CHANGE too, as on the GAME OVER screen: the other
+character, the stage started again from its start, your lives and score kept.
+
 Menu
 ----
 F1, Esc or the controller's Back button pauses the game and opens the menu: save and load
@@ -205,6 +215,8 @@ states, choose the slot, reset, back to the start screen, quit, and:
 Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            VSync: on (the default), each frame is shown when the screen refreshes, so the
            picture never tears; off shows it at once
+           Widescreen (experimental): a page of its own with everything below up to
+           Title art
            Widescreen: Off (4:3, the default) or 16:9, more of the level on each side;
            see below
            Level ends: with widescreen, at the start or end of a level, Picture moves
