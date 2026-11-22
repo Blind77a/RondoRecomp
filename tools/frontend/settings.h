@@ -35,7 +35,7 @@ typedef struct Settings {
     int sides;             /* SIDES_*: what fills a wide screen beside the picture */
     bool smooth_fades;     /* the game's fades blended in 24-bit colour (video.h; off by default) */
     bool night_sky;        /* stars twinkle, a rare shooting star (torchglow.h; off by default) */
-    bool sail_sway;        /* Stage 2's purple sails move in the wind (torchglow.h; off by default) */
+    bool sail_sway;        /* the docks' purple sails (Stage 5) move in the wind (torchglow.h; off by default) */
     bool shield_shine;     /* a glint runs round the heraldic shields' rims (torchglow.h; off by default) */
     bool moon_glow;        /* a faint rim of light round the moon (torchglow.h; off by default) */
     bool alcove_glow;      /* torches in painted alcoves light the alcove's red bricks (torchglow.h; off by default) */
@@ -49,6 +49,7 @@ typedef struct Settings {
     bool start_screen;     /* show the start screen before the game (rondo.exe --play skips it once) */
     bool eight_way;        /* Richter's whip and Maria's doves in 8 directions (moves.h) */
     bool limp_whip;        /* Richter's whip hangs while Attack is held (moves.h) */
+    bool reduce_slowdown;  /* extra CPU time so busy scenes do not slow down (pce.h; off by default) */
     bool sticky_stairs;    /* jumps land on stairs without Up held (moves.h; off by default) */
     bool run;              /* the Run control (hold LB) runs, as in Symphony of the Night (game.h) */
     int slot;              /* save-state slot 1-9 */

@@ -91,6 +91,7 @@ void settings_load(Settings *s, const char *path)
         else if (!strcmp(key, "eight_way")) s->eight_way = n != 0;
         else if (!strcmp(key, "limp_whip")) s->limp_whip = n != 0;
         else if (!strcmp(key, "sticky_stairs")) s->sticky_stairs = n != 0;
+        else if (!strcmp(key, "reduce_slowdown")) s->reduce_slowdown = n != 0;
         else if (!strcmp(key, "run")) s->run = n != 0;
         else if (!strcmp(key, "disc_en")) snprintf(s->disc_en, sizeof s->disc_en, "%s", val);
         else if (!strcmp(key, "retroachievements")) s->ra_enabled = n != 0;
@@ -119,13 +120,13 @@ bool settings_save(const Settings *s, const char *path)
             "fullscreen = %d\nvsync = %d\nwidescreen_16_9 = %d\nwidescreen_edges = %d\nwidescreen_menus = %d\nwidescreen_room_sides = %d\nwidescreen_open_arenas = %d\nwidescreen_near_spawns = %d\nwidescreen_title_art = %d\naspect = %d\nscaling = %d\nfilter = %d\n"
             "screen_effect = %d\neffect_strength = %d\nsides = %d\nsmooth_fades = %d\nsmooth_dithering = %d\ntorch_glow = %d\ncandle_glow = %d\nalcove_glow = %d\nmoon_glow = %d\nshield_shine = %d\nsail_sway = %d\nnight_sky = %d\n"
             "skip_cinematics = %d\nrewind = %d\nvolume = %d\nslot = %d\nstart_screen = %d\n"
-            "eight_way = %d\nlimp_whip = %d\nsticky_stairs = %d\nrun = %d\n"
+            "eight_way = %d\nlimp_whip = %d\nsticky_stairs = %d\nreduce_slowdown = %d\nrun = %d\n"
             "cheat_health = %d\ncheat_hearts = %d\ncheat_lives = %d\n"
             "maria_unlocked = %d\nplay_maria = %d\n"
             "language = %d\ndisc_ja = %s\ndisc_en = %s\n",
             s->fullscreen, s->vsync, s->widescreen, s->wide_edges, s->wide_menus, s->room_sides, s->open_arenas, s->near_spawns, s->title_art, s->aspect, s->scaling, s->filter, s->effect, s->effect_strength, s->sides, s->smooth_fades, s->smooth_dither, s->torch_glow, s->candle_glow, s->alcove_glow, s->moon_glow, s->shield_shine, s->sail_sway, s->night_sky,
             s->skip, s->rewind, s->volume, s->slot, s->start_screen,
-            s->eight_way, s->limp_whip, s->sticky_stairs, s->run,
+            s->eight_way, s->limp_whip, s->sticky_stairs, s->reduce_slowdown, s->run,
             s->cheat_health, s->cheat_hearts, s->cheat_lives,
             s->maria_unlocked, s->play_maria,
             s->language, s->disc_ja, s->disc_en);

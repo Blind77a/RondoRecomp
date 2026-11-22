@@ -133,6 +133,7 @@ static const Item GAMEPLAY_ITEMS[] = {
     TOGGLE("8-way whip and doves", eight_way, MENU_SETTINGS_CHANGED),
     TOGGLE("Limp whip", limp_whip, MENU_SETTINGS_CHANGED),
     TOGGLE("Sticky stairs", sticky_stairs, MENU_SETTINGS_CHANGED),
+    TOGGLE("Reduce slowdown", reduce_slowdown, MENU_SETTINGS_CHANGED),
     TOGGLE("Run", run, MENU_SETTINGS_CHANGED),
     {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
 };
@@ -257,6 +258,7 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Start screen at launch", "Off: " GAME_PROGRAM " goes straight into the game."},
     {"8-way whip and doves", "Attack with a direction held aims the whip (or Maria's doves); Sub-weapon throws."},
     {"Limp whip", "Keep Attack held after a whip: it hangs from Richter's hand and the d-pad swings it."},
+    {"Reduce slowdown", "Busy scenes (lots of enemies, scythes, blood) no longer slow down: the game gets extra CPU time."},
     {"Sticky stairs", "Jumping onto stairs lands on them without holding Up."},
     {"Run", "Hold the Run control (LB / S unless changed) to run, as in Symphony of the Night."},
     {"Infinite health", "Health never goes down."},

@@ -1254,6 +1254,9 @@ int main(int argc, char **argv)
         move_opts = (MoveOptions){set.eight_way && !hardcore && !test_mode, set.limp_whip && !hardcore && !test_mode,
                                   set.sticky_stairs && !hardcore && !test_mode};
         vce_set_smooth_fades(set.smooth_fades && !test_mode);   /* only the picture: kept in hardcore */
+        /* Gameplay > Reduce slowdown: half a frame of extra CPU time a frame (pce.h; it changes how
+         * the game runs: not in hardcore) */
+        pce_set_extra_cpu(set.reduce_slowdown && !hardcore && !test_mode ? 131 : 0);
         {   /* widescreen fills the window's shape, up to 16:9 (off in hardcore mode: it changes
              * the game's code and shows more of the level) */
             int ww, wh;
@@ -1459,7 +1462,9 @@ int main(int argc, char **argv)
                         tg_n += rigging_sway(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam,
                                              pce.wram[0x1E8E] << 8 | pce.wram[0x1E20], vdc_sprite_pixels(), vdc_behind_pixels());
                     if (set.night_sky) tg_n += night_sky(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
-                    if (set.shield_shine) tg_n += shield_shine(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
+                    /* (the docks' only, area $26/$27: a castle pillar's base is in the shields' rim
+                     * colours, and a glint ran round it) */
+                    if (set.shield_shine && (pce.wram[0xA2] & 0xFE) == 0x26) tg_n += shield_shine(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                     if (set.moon_glow) tg_n += moon_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                     if (set.alcove_glow) tg_n += alcove_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam, set.torch_glow);
                     if (set.torch_glow) tg_n += torch_glow(tg, tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);
