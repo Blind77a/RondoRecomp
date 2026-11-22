@@ -1012,14 +1012,20 @@ static void keep_tiles(Pce *p, bool on)
         keep_on = on;
         return;
     }
-    /* cells changed in each column and row: a column or a row drawn changes many at once */
+    /* cells written in each column and row: a column or a row drawn writes many at once,
+     * changed or not (counted by what changed, a row drawn again over the Stage 2 ship's
+     * girder end, a few cells, looked like an object's tiles: the girder's tiles the object
+     * had put there were lost and the blank ones kept, a black gap at the picture's left) */
+    const uint8_t *wr = vdc_bat_written();
     int col_n[KEEP_W] = {0}, row_n[64] = {0};
     for (int row = 0; row < mh; row++)
-        for (int c = 0; c < mw; c++)
-            if (d->vram[row * mw + c] != keep_prev[row * mw + c]) {
+        for (int c = 0; c < mw; c++) {
+            int i = row * mw + c;
+            if ((i < VDC_BAT_WATCH && wr[i]) || d->vram[i] != keep_prev[i]) {
                 col_n[c]++;
                 row_n[row]++;
             }
+        }
     /* most of the map at once (a room drawn again, a save state loaded): start over */
     int total = 0;
     for (int c = 0; c < mw; c++) total += col_n[c];
@@ -1816,6 +1822,7 @@ void wide_frame(Wide *w, Pce *p)
     bool scrolls = room_scrolls(r);
     /* objects' tiles kept from columns drawn over them (keep_tiles) */
     keep_tiles(p, want && s == RONDO_PLAYING && scrolls && w->patched && objects_on);
+    vdc_bat_written_clear();   /* (the next frame's writes, for keep_tiles) */
     /* A boss locks the camera to one screen of a room it scrolled through (Stage 2's: the
      * limits close in on the arena, with no new room): the picture stays wide, the map
      * beside the arena (streamed as the camera came in, and still there) shown, and the
