@@ -38,6 +38,7 @@ ISO/WAV/BIN tracks); everything derived from it goes to `work/`, which is git-ig
 - Compatible with the original PC Engine version, English patched, Wii, and Wii U versions
 - Full suite of video options including filters and screen effects
 - Torch glow (Video > Improvements, off by default): the wall torches light the bricks round them, their light flickering (Stage 3's dungeon torches; only the picture changes)
+- Candle glow (Video > Improvements, off by default): the blue-flamed candles get a soft, flickering blue halo (only the picture changes)
 - Save stating
 - Cheats
 - Super Castlevania IV moves (Gameplay page): 8-way whipping and dove throwing, and a limp whip, after Pizzano's Super Rondo of Blood hack (RondoRecomp's own version)

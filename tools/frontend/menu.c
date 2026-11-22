@@ -91,6 +91,7 @@ static const Item VIDEO_ITEMS[] = {
 /* Video > Improvements: the game's graphics touched up (picture only) */
 static const Item IMPROVE_ITEMS[] = {
     TOGGLE("Torch glow", torch_glow, MENU_SETTINGS_CHANGED),
+    TOGGLE("Candle glow", candle_glow, MENU_SETTINGS_CHANGED),
     {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
 };
 static const Item GAMEPLAY_ITEMS[] = {
@@ -191,6 +192,7 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Fullscreen", "Use the whole screen at its own resolution (F11)."},
     {"Improvements", "The game's graphics touched up. Only the picture changes: the game plays the same."},
     {"Torch glow", "Wall torches light the bricks round them, their light flickering."},
+    {"Candle glow", "Blue-flamed candles glow with a soft, flickering blue halo."},
     {"VSync", "Show each frame when the screen refreshes: no tearing. Off: at once, maybe torn."},
     {"Aspect ratio", "4:3 as on a TV, square pixels, or stretched to fill."},
     {"Size", "As big as the screen allows, or whole multiples only."},

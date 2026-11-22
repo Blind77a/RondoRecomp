@@ -2,6 +2,7 @@
 #include "torchglow.h"
 
 #include <math.h>
+#include <stdbool.h>
 #include <string.h>
 
 /* A wall torch, as the game draws it (Stage 3's dungeon, area $18): a flame of 2 x 2 pixels
@@ -32,6 +33,49 @@ static float noise(uint32_t seed, uint64_t frame)
     t = t * t * (3.0f - 2.0f * t);
     float a = hash01(seed * 7919u + k), b = hash01(seed * 7919u + k + 1);
     return a + (b - a) * t;
+}
+
+/* A blue candle's flame, as the game draws it: its tip a white or pink pixel ($1FF / $0FB)
+ * with a blue either side ($007 / $00F: 0024B6 / 006DFF) and a blue below; 3 lines down the
+ * candle's pale blue-grey body ($1B4: 91B6B6). Its animation moves the tip a pixel. */
+#define CANDLE_BODY 0xFF91B6B6u
+#define MAX_CANDLES 16
+static bool flame_blue(uint32_t p) { return (p >> 16 & 0xFF) == 0 && (p & 0xFF) >= 0xB6; }
+
+int candle_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_x)
+{
+    int cx[MAX_CANDLES], cy[MAX_CANDLES], n = 0;
+    for (int y = 0; y + 3 < h && n < MAX_CANDLES; y++)
+        for (int x = 1; x + 1 < w && n < MAX_CANDLES; x++) {
+            uint32_t t = img[y * pitch + x];
+            if (t != 0xFFFFFFFFu && t != 0xFFFF6D6Du) continue;
+            if (!flame_blue(img[y * pitch + x - 1]) || !flame_blue(img[y * pitch + x + 1]) || !flame_blue(img[(y + 1) * pitch + x]))
+                continue;
+            if (img[(y + 3) * pitch + x] != CANDLE_BODY) continue;
+            cx[n] = x;
+            cy[n] = y;
+            n++;
+        }
+    for (int c = 0; c < n; c++) {
+        uint32_t seed = (uint32_t)((cx[c] + world_x) >> 2) * 977u + (uint32_t)(cy[c] >> 3) + 5u;
+        float f = 0.6f + 0.4f * noise(seed, frame);
+        float rad = 13.0f * f;
+        int x0 = cx[c] - 14, x1 = cx[c] + 14, y0 = cy[c] - 14, y1 = cy[c] + 14;
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 > w - 1) x1 = w - 1;
+        if (y1 > h - 1) y1 = h - 1;
+        for (int y = y0; y <= y1; y++)
+            for (int x = x0; x <= x1; x++) {
+                float dx = (float)(x - cx[c]), dy = (float)(y - cy[c]) * 1.1f, d = sqrtf(dx * dx + dy * dy);
+                if (d >= rad) continue;
+                float a = (1.0f - d / rad) * (1.0f - d / rad) * 0.8f * f;
+                uint32_t p = img[y * pitch + x];
+                float r = (float)(p >> 16 & 0xFF) + 60.0f * a, g = (float)(p >> 8 & 0xFF) + 150.0f * a, b = (float)(p & 0xFF) + 255.0f * a;
+                img[y * pitch + x] = 0xFF000000u | (uint32_t)clampf(r) << 16 | (uint32_t)clampf(g) << 8 | (uint32_t)clampf(b);
+            }
+    }
+    return n;
 }
 
 int torch_glow(const uint32_t *src, uint32_t *dst, int w, int h, int pitch, uint64_t frame, int world_x)

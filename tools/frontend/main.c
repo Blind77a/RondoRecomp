@@ -1300,17 +1300,24 @@ int main(int argc, char **argv)
             }
         }
 
-        /* video (Video > Improvements > Torch glow: torchglow.h, only the picture, kept in
+        /* video (Video > Improvements > Torch glow, Candle glow: torchglow.h, only the picture, kept in
          * hardcore; worked out once a game frame) */
         {
             const uint32_t *fb = pce.vdc.fb;
-            if (set.torch_glow && !test_mode) {
+            if ((set.torch_glow || set.candle_glow) && !test_mode) {
                 static uint32_t tg[PCE_FB_MAX_W * PCE_FB_MAX_H];
                 static uint64_t tg_frame = UINT64_MAX;
                 static int tg_n;
                 if (ran_frame || tg_frame != (uint64_t)pce.frame) {
                     int cam = (pce.wram[0x1E96] & 0x0F) << 8 | pce.wram[0x1E08];
-                    tg_n = torch_glow(pce.vdc.fb, tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);
+                    if (set.torch_glow) {
+                        tg_n = torch_glow(pce.vdc.fb, tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);
+                    } else {
+                        for (int y = 0; y < pce.vdc.fb_h; y++)
+                            memcpy(&tg[y * PCE_FB_MAX_W], &pce.vdc.fb[y * PCE_FB_MAX_W], (size_t)pce.vdc.fb_w * sizeof *tg);
+                        tg_n = 0;
+                    }
+                    if (set.candle_glow) tg_n += candle_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);
                     tg_frame = (uint64_t)pce.frame;
                 }
                 if (tg_n) fb = tg;

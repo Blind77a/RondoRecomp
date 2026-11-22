@@ -217,6 +217,8 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            Improvements: a page of graphics touch-ups (only the picture changes):
              Torch glow: Off (the default) or on: the wall torches (Stage 3's dungeon)
              light the bricks round them, their light flickering
+             Candle glow: Off (the default) or on: the blue-flamed candles get a
+             soft, flickering blue halo
 Gameplay   Skip cinematics: Press START, Automatically, or Never. During the logo and
            the intro (the story narration and opening before the title screen), START, A
            or X goes straight to the title screen, the way the game itself allows once it
