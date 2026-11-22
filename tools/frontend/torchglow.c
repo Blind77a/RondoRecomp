@@ -1,6 +1,8 @@
 /* See torchglow.h. */
 #include "torchglow.h"
 
+#include "pce/pce.h"
+
 #include <math.h>
 #include <stdbool.h>
 #include <string.h>
@@ -177,6 +179,79 @@ int moon_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame)
                                  (uint32_t)clampf((float)g + 150.0f * a) << 8 | (uint32_t)clampf((float)b + 190.0f * a);
         }
     return 1;
+}
+
+/* Shield shine: the wall of heraldic shields (Stage 2's docks, area $26): each shield's olive
+ * rim ($6D6D48, $484824) catches the light as a glint runs round it, every 48 frames. A shield
+ * is found by its rim's upper part: a connected run of those two colours some 20-26 px wide
+ * and 14-24 tall; the shield is that wide and 40 tall from its top. Only the rim's pixels
+ * change, the face and the stone round it are left as they are. */
+#define SHIELD_RIM_A 0xFF6D6D48u
+#define SHIELD_RIM_B 0xFF484824u
+#define MAX_SHIELDS 24
+static bool rim_px(uint32_t p) { return p == SHIELD_RIM_A || p == SHIELD_RIM_B; }
+
+int shield_shine(uint32_t *img, int w, int h, int pitch, uint64_t frame)
+{
+    static uint8_t seen[PCE_FB_MAX_W * PCE_FB_MAX_H];
+    static int stack[PCE_FB_MAX_W * PCE_FB_MAX_H];
+    if (w > PCE_FB_MAX_W || h > PCE_FB_MAX_H) return 0;
+    memset(seen, 0, (size_t)w * (size_t)h);
+    int bx0[MAX_SHIELDS], by0[MAX_SHIELDS], bx1[MAX_SHIELDS], n = 0;
+    for (int y = 0; y < h && n < MAX_SHIELDS; y++)
+        for (int x = 0; x < w && n < MAX_SHIELDS; x++) {
+            if (seen[y * w + x] || !rim_px(img[y * pitch + x])) continue;
+            int sp = 0, x0 = x, x1 = x, y0 = y, y1 = y, count = 0;
+            stack[sp++] = y * w + x;
+            seen[y * w + x] = 1;
+            while (sp) {
+                int q = stack[--sp], qx = q % w, qy = q / w;
+                count++;
+                if (qx < x0) x0 = qx;
+                if (qx > x1) x1 = qx;
+                if (qy < y0) y0 = qy;
+                if (qy > y1) y1 = qy;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int nx = qx + dx, ny = qy + dy;
+                        if (nx < 0 || ny < 0 || nx >= w || ny >= h || seen[ny * w + nx]) continue;
+                        if (!rim_px(img[ny * pitch + nx])) continue;
+                        seen[ny * w + nx] = 1;
+                        stack[sp++] = ny * w + nx;
+                    }
+            }
+            int bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+            if (bw >= 20 && bw <= 26 && bh >= 14 && bh <= 24 && count >= 30) {
+                bx0[n] = x0;
+                by0[n] = y0;
+                bx1[n] = x1;
+                n++;
+            }
+        }
+    float t = (float)(frame % 48) / 48.0f;
+    for (int s = 0; s < n; s++) {
+        float sw = (float)(bx1[s] - bx0[s] + 1), sh = 40.0f;
+        for (int y = by0[s]; y < by0[s] + 41 && y < h; y++)
+            for (int x = bx0[s] - 2; x <= bx1[s] + 2 && x < w; x++) {
+                if (x < 0) continue;
+                uint32_t p = img[y * pitch + x];
+                if (!rim_px(p)) continue;
+                float u = ((float)(x - bx0[s]) / sw) - 0.5f, v = ((float)(y - by0[s]) / sh) - 0.5f;
+                float ang = atan2f(v, u) / 6.2831853f;
+                if (ang < 0.0f) ang += 1.0f;
+                float d = fabsf(ang - t);
+                if (d > 0.5f) d = 1.0f - d;
+                float a = expf(-(d / 0.05f) * (d / 0.05f));
+                if (a < 0.01f) continue;
+                float r = (float)(p >> 16 & 0xFF), g = (float)(p >> 8 & 0xFF), b = (float)(p & 0xFF);
+                float k = 0.5f + (r + g + b) / 765.0f;
+                r += (255.0f - r) * a * k;
+                g += (245.0f - g) * a * k;
+                b += (220.0f - b) * a * k;
+                img[y * pitch + x] = 0xFF000000u | (uint32_t)clampf(r) << 16 | (uint32_t)clampf(g) << 8 | (uint32_t)clampf(b);
+            }
+    }
+    return n;
 }
 
 int torch_glow(const uint32_t *src, uint32_t *dst, int w, int h, int pitch, uint64_t frame, int world_x)

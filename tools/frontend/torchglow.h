@@ -24,6 +24,10 @@ int candle_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int worl
  * Run before torch_glow (it finds flames by colours Torch glow changes). */
 /* Moon glow (Video > Improvements > Moon glow): a faint rim of light round the moon (Stage 2's
  * docks), only in the sky round it, breathing very slowly. In place; 1 if the moon was found. */
+/* Shield shine (Video > Improvements > Shield shine): the wall of heraldic shields (Stage 2's
+ * docks): a glint runs round each shield's rim. In place; returns how many were found. */
+int shield_shine(uint32_t *img, int w, int h, int pitch, uint64_t frame);
+
 int moon_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame);
 
 int alcove_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_x, bool skip_full);
