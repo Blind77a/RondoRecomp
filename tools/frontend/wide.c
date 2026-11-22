@@ -1240,7 +1240,9 @@ static void edge_spawns_at_build(Wide *w, Pce *p)
     for (int i = 0; i < OBJ_SLOTS; i++) born += r[OBJ_KIND + i] && !w->obj_kind[i];
     for (int i = 0; i < OBJ_SLOTS; i++) {
         uint8_t kind = r[OBJ_KIND + i];
-        bool first = kind && r[OBJ_FRAME + i] && !(kind == w->obj_kind[i] && w->obj_shown[i]);
+        /* (first drawn, or just made: made at the edge before it has a sprite, it moves a
+         * pixel before it is first drawn, as Stage 4's Medusa heads, kind $27, at -16) */
+        bool first = kind && ((r[OBJ_FRAME + i] && !(kind == w->obj_kind[i] && w->obj_shown[i])) || kind != w->obj_kind[i]);
         bool batch = w->obj_kind[i] ? edge_batch[i] : born >= 3;
         if (!first || batch || (r[OBJ_FLAGS + i] & 1) || i == HUD_SLOT || i == SUBWEAPON_SLOT) continue;
         int x = (int16_t)(r[OBJ_XL + i] | r[OBJ_XH + i] << 8), to = edge_spawn_to(x, w->active, w->shift);
@@ -2066,7 +2068,9 @@ void wide_frame(Wide *w, Pce *p)
     }
     for (int i = 0; i < OBJ_SLOTS; i++) {
         uint8_t kind = r[OBJ_KIND + i];
-        bool first = kind && r[OBJ_FRAME + i] && !(kind == w->obj_kind[i] && w->obj_shown[i]);
+        /* (first drawn, or just made: made at the edge before it has a sprite, it moves a
+         * pixel before it is first drawn, as Stage 4's Medusa heads, kind $27, at -16) */
+        bool first = kind && ((r[OBJ_FRAME + i] && !(kind == w->obj_kind[i] && w->obj_shown[i])) || kind != w->obj_kind[i]);
         w->obj_kind[i] = kind;
         w->obj_shown[i] = kind && r[OBJ_FRAME + i];
         if (!first || edge_batch[i] || !w->edge_live || (r[OBJ_FLAGS + i] & 1) || i == HUD_SLOT || i == SUBWEAPON_SLOT)
