@@ -1662,6 +1662,235 @@ static int sky_room(const uint8_t *r)
     return 0;
 }
 
+/* Carried sides: beside a room kept 4:3 whose edge is a pattern repeating every 1, 2 or 4
+ * columns (a stone pillar, a wall, a floor, water), that pattern carried on outward at full
+ * brightness instead of the room mirrored, so the room reads as going on (Stage 1's town: the
+ * pillar at its right edge becomes a wall of stone blocks, the black above it stays black, the
+ * water below it water). A row repeats when the columns from the edge match those a period in
+ * for two columns past it; a row that does not carries on its last two columns as a block (a
+ * pillar one block wide). A side is carried when its last two columns hold few different tiles
+ * over the rows on screen (CARRY_KINDS: a pillar or a plain wall); else it is mirrored
+ * as before. */
+static int edge_repeat(const Vdc *d, int mw, int row, int edge, int dir)
+{
+#define T(c) d->vram[row * mw + ((c) & (mw - 1))]
+    static const int ps[3] = {1, 2, 4};
+    for (int j = 0; j < 3; j++) {
+        int per = ps[j];
+        bool ok = true;
+        for (int i = 0; i < per + 2 && ok; i++) ok = T(edge + dir * i) == T(edge + dir * (i + per));
+        if (ok) return per;
+    }
+    return 0;
+#undef T
+}
+
+/* the sides (VDC_SIDE_LEFT / RIGHT) filled with the room's edge carried on */
+#define CARRY_KINDS 12   /* the most different tiles the edge's two columns may hold */
+static int carried_sides(const Vdc *d, int mw, int mh, int first, int last, int rows)
+{
+    int per[2][64], sides = 0;
+    bool on[64] = {false};
+    const uint16_t *my = vdc_row_map_y();
+    for (int y = 0; y < rows; y++) on[(my[y] & (mh * 8 - 1)) >> 3] = true;
+    /* the edge's last two columns, over the rows on screen (the rest of the map is other
+     * rooms'): a pillar or a wall standing there is a few tiles, used again and again */
+    for (int s = 0; s < 2; s++) {
+        uint16_t seen[CARRY_KINDS];
+        int ns = 0;
+        bool few = true;
+        for (int r = 0; r < mh && few; r++) {
+            if (!on[r]) continue;
+            for (int k = 0; k < 2 && few; k++) {
+                /* (by tile: the pillar is drawn in the water's palette where it stands in it) */
+                uint16_t e = d->vram[r * mw + ((s ? last - k : first + k) & (mw - 1))] & 0x7FF;
+                int i = 0;
+                while (i < ns && seen[i] != e) i++;
+                if (i == ns) {
+                    if (ns == CARRY_KINDS) few = false;
+                    else seen[ns++] = e;
+                }
+            }
+        }
+        if (few && ns) sides |= s ? VDC_SIDE_RIGHT : VDC_SIDE_LEFT;
+    }
+    for (int r = 0; r < mh; r++) {
+        per[0][r] = edge_repeat(d, mw, r, first, 1);
+        per[1][r] = edge_repeat(d, mw, r, last, -1);
+        if (!per[0][r]) per[0][r] = 2;   /* (else the edge's last two columns, as a block) */
+        if (!per[1][r]) per[1][r] = 2;
+    }
+    for (int r = 0; r < mh; r++) {
+        uint16_t *l = &side_l[r * VDC_SIDE_TILES], *rt = &side_r[r * VDC_SIDE_TILES];
+        int pl = per[0][r], pr = per[1][r];
+        for (int k = 0; k < VDC_SIDE_TILES; k++) {
+            /* column first-1-k is the edge column a whole number of periods along, likewise
+             * last+1+k */
+            int cl = first - 1 - k, cr = last + 1 + k;
+            if (sides & VDC_SIDE_LEFT)
+                l[k] = d->vram[r * mw + ((first + (((cl - first) % pl) + pl) % pl) & (mw - 1))];
+            if (sides & VDC_SIDE_RIGHT)
+                rt[k] = d->vram[r * mw + ((last - (((last - cr) % pr) + pr) % pr) & (mw - 1))];
+        }
+    }
+    return sides;
+}
+
+/* Side recipes: rooms whose sides are laid out by hand. Beside the room on `side`: the room's
+ * wall (its commonest 2 x 2 block of map entries, in step with the map) down to map row
+ * `floor`, the edge carried on below it (carried_sides' rows), and a lantern of the game's
+ * hung on the wall: a 32 x 32 sprite (sprite patterns `pat_a` / `pat_b`, flickering between
+ * them, with attributes `attr`, as the game draws its wall lanterns) `dx` px out from the room's
+ * edge, its top at map row `row` (0: none). The sprite's graphics and palette are the game's,
+ * as loaded for the room. */
+/* (`ledge`: map rows ledge..floor-1 carry on the nearest repeat past the edge's pillar,
+ * ledge_entry, as a ledge running along the wall's foot; ledge = floor for none. `copy`: up to
+ * two blocks of the room's own map entries copied into the wall, columns col..col+w-1, rows
+ * row0..row1, placed from side column k (0: next to the room); w 0 for none. A lantern: row
+ * 0 for none. `brick`: map cells of the room itself, columns col..col+w-1, rows row0..row1,
+ * drawn as the wall instead (vdc_set_map_patch: the map is left as it is); w 0 for none.
+ * `worn`: the wall's map entries worn_a / worn_b drawn instead of its second row's two
+ * (T[2], T[3]) in rows worn_r0..worn_r1, about one in three, by map position (the room's own
+ * worn bricks, breaking up the repeat); worn_a 0 for none.) */
+typedef struct { uint8_t col, w, row0, row1, k; } SideCopy;
+static const struct { uint8_t area, room, side, ledge, floor, dx, row; uint16_t pat_a, pat_b, attr; SideCopy copy[2], brick;
+                      uint16_t worn_a, worn_b; uint8_t worn_r0, worn_r1; } SIDE_RECIPES[] = {
+    /* Stage 1's town, the house with the stairs: brick beside the pillar, with a drainpipe (and
+     * the black gap at its top) and one of the room's tall barred windows on it, the ledge
+     * along its foot, the pillar's stone into the water below; the room's own short pipe at
+     * its edge, above the pillar, bricked over */
+    {0x10, 0x04, VDC_SIDE_RIGHT, 54, 56, 0, 0, 0, 0, 0, {{5, 1, 32, 53, 0}, {8, 4, 36, 46, 2}}, {30, 2, 32, 39, 0},
+     0x8234, 0x8235, 44, 53},
+};
+static uint16_t room_patch[64 * VDC_FILL_W];
+static bool room_patched;
+static VdcExtraSprite side_lantern[1];
+static int n_side_lantern;
+
+/* a worn brick at this map row and brick (two columns): about one in three, by place */
+static bool worn_at(int row, int brick)
+{
+    uint32_t n = (uint32_t)(row * 131 + brick * 7919) * 2654435761u;
+    n ^= n >> 15;
+    n *= 0x27d4eb2du;
+    n ^= n >> 13;
+    return (n & 0xFFFF) < 0x5700;
+}
+
+/* a ledge row's entry for map column `col` beside the room: from the edge (`dir` 1 going right
+ * from `edge`, -1 left) inward, the nearest columns that repeat every 1, 2 or 4 (checked for
+ * two columns past the repeat: past a pillar at the edge), in step with that repeat */
+static uint16_t ledge_entry(const Vdc *d, int mw, int row, int edge, int dir, int col)
+{
+#define T(c) d->vram[row * mw + ((c) & (mw - 1))]
+    static const int ps[3] = {1, 2, 4};
+    for (int off = 0; off <= 12; off++) {
+        int s = edge + dir * off;
+        for (int j = 0; j < 3; j++) {
+            int per = ps[j];
+            bool ok = true;
+            for (int i = 0; i < 2 && ok; i++) ok = T(s + dir * i) == T(s + dir * (i + per));
+            if (ok) return T(dir > 0 ? s + ((((col - s) % per) + per) % per) : s - ((((s - col) % per) + per) % per));
+        }
+    }
+    return T(edge);
+#undef T
+}
+
+/* the room's wall: its commonest 2 x 2 block of map entries (not all one), at least 12 times */
+static bool wall_texture(const Vdc *d, int mw, int mh, int first, int last, uint16_t T[4], int *pr, int *pc)
+{
+    static uint16_t key[2048][4];
+    static int cnt[2048], par[2048];
+    int nk = 0, best = -1;
+    for (int r = 0; r + 1 < mh; r++)
+        for (int c = first; c < last; c++) {
+            uint16_t b[4] = {d->vram[r * mw + (c & (mw - 1))], d->vram[r * mw + ((c + 1) & (mw - 1))],
+                             d->vram[(r + 1) * mw + (c & (mw - 1))], d->vram[(r + 1) * mw + ((c + 1) & (mw - 1))]};
+            if (b[0] == b[1] && b[0] == b[2] && b[0] == b[3]) continue;
+            int p = (r & 1) << 1 | (c & 1), i = 0;
+            while (i < nk && (par[i] != p || memcmp(key[i], b, sizeof b))) i++;
+            if (i == nk) {
+                if (nk == 2048) continue;
+                memcpy(key[nk], b, sizeof b);
+                par[nk] = p;
+                cnt[nk++] = 0;
+            }
+            if (++cnt[i] > (best < 0 ? 0 : cnt[best])) best = i;
+        }
+    if (best < 0 || cnt[best] < 12) return false;
+    memcpy(T, key[best], 4 * sizeof T[0]);
+    *pr = par[best] >> 1;
+    *pc = par[best] & 1;
+    return true;
+}
+
+/* a side recipe for this room laid over the sides (after carried_sides); the sides it lays */
+static int side_recipe(const uint8_t *wr, uint64_t wr_frame, const Vdc *d, int mw, int mh, int first, int last)
+{
+    int sides = 0;
+    for (size_t i = 0; i < sizeof SIDE_RECIPES / sizeof SIDE_RECIPES[0]; i++) {
+        if (wr[AREA] != SIDE_RECIPES[i].area || wr[ROOM] != SIDE_RECIPES[i].room) continue;
+        uint16_t T[4];
+        int pr, pc;
+        if (!wall_texture(d, mw, mh, first, last, T, &pr, &pc)) continue;
+        bool right = SIDE_RECIPES[i].side == VDC_SIDE_RIGHT;
+        int fl = SIDE_RECIPES[i].floor;
+        for (int r = 0; r < mh; r++) {
+            uint16_t *s = right ? &side_r[r * VDC_SIDE_TILES] : &side_l[r * VDC_SIDE_TILES];
+            /* (the wall from the top of the room's 32 map rows, `fl` & ~31, down to `fl`; below
+             * it, the edge as carried_sides carried it; the map's other rows are another room's) */
+            if (r < (fl & ~31) || r >= fl) continue;
+            bool ledge = r >= SIDE_RECIPES[i].ledge;
+            for (int k = 0; k < VDC_SIDE_TILES; k++) {
+                int c = right ? last + 1 + k : first - 1 - k;
+                int ti = ((r - pr) & 1) << 1 | ((c - pc) & 1);
+                s[k] = ledge ? ledge_entry(d, mw, r, right ? last : first, right ? -1 : 1, c) : T[ti];
+                /* (a worn brick here and there: both halves of a brick together, by its place) */
+                if (!ledge && ti >= 2 && SIDE_RECIPES[i].worn_a && r >= SIDE_RECIPES[i].worn_r0 &&
+                    r <= SIDE_RECIPES[i].worn_r1 && worn_at(r, (c - pc) >> 1))
+                    s[k] = ti == 2 ? SIDE_RECIPES[i].worn_a : SIDE_RECIPES[i].worn_b;
+            }
+        }
+        for (int j = 0; j < 2; j++) {
+            const SideCopy *cp = &SIDE_RECIPES[i].copy[j];
+            for (int r = cp->row0; cp->w && r <= cp->row1 && r < mh; r++) {
+                uint16_t *s = right ? &side_r[r * VDC_SIDE_TILES] : &side_l[r * VDC_SIDE_TILES];
+                for (int q = 0; q < cp->w; q++) {
+                    int k = cp->k + (right ? q : cp->w - 1 - q);
+                    if (k < VDC_SIDE_TILES) s[k] = d->vram[r * mw + ((cp->col + q) & (mw - 1))];
+                }
+            }
+        }
+        const SideCopy *bk = &SIDE_RECIPES[i].brick;
+        if (bk->w) {
+            if (!room_patched)
+                for (int q = 0; q < 64 * VDC_FILL_W; q++) room_patch[q] = VDC_SIDE_NONE;
+            for (int r = bk->row0; r <= bk->row1 && r < mh; r++)
+                for (int c = bk->col; c < bk->col + bk->w; c++)
+                    room_patch[r * VDC_FILL_W + (c & (VDC_FILL_W - 1))] = T[((r - pr) & 1) << 1 | ((c - pc) & 1)];
+            room_patched = true;
+        }
+        if (SIDE_RECIPES[i].row && n_side_lantern < 1) {
+            /* (where its row is on screen this frame, and the edge's screen X) */
+            const uint16_t *my = vdc_row_map_y(), *rs = vdc_row_scroll();
+            int dy = (SIDE_RECIPES[i].row * 8 - my[0]) & (mh * 8 - 1);
+            if (dy >= mh * 8 - 64) dy -= mh * 8;
+            int ex = right ? (last + 1) * 8 - (rs[0] & 0x3FF) + SIDE_RECIPES[i].dx
+                           : first * 8 - (rs[0] & 0x3FF) - SIDE_RECIPES[i].dx - 32;
+            VdcExtraSprite *e = &side_lantern[n_side_lantern++];
+            e->x = (int16_t)ex;
+            e->y = (int16_t)dy;
+            e->pattern = (wr_frame / 4) & 1 ? SIDE_RECIPES[i].pat_b : SIDE_RECIPES[i].pat_a;
+            e->attr = SIDE_RECIPES[i].attr;
+        }
+        sides |= SIDE_RECIPES[i].side;
+    }
+    return sides;
+}
+
+static int room_walled;   /* the sides room_sides carried on or laid out (not mirrored) */
+
 static bool room_sides(Pce *p, int sky)
 {
     static const int map_w[4] = {32, 64, 128, 128};
@@ -1766,6 +1995,10 @@ static bool room_sides(Pce *p, int sky)
             rt[k] = r < mh ? d->vram[r * mw + ((last - k) & (mw - 1))] : VDC_SIDE_NONE;
         }
     }
+    room_walled = sky ? 0 : carried_sides(d, mw, mh, first, last, rows);
+    n_side_lantern = 0;
+    room_patched = false;
+    if (!sky) room_walled |= side_recipe(p->wram, p->frame, d, mw, mh, first, last);
     return true;
 }
 
@@ -2140,8 +2373,12 @@ void wide_frame(Wide *w, Pce *p)
     /* (the save menu's parked torch flames: all through its screens with widescreen on, the
      * frames between pages too, which are not widened and showed them a moment) */
     vdc_set_hide_corner(menu || (want && (s == RONDO_SAVE_MENU || s == RONDO_GAME_OVER)));
-    vdc_set_side_fade(walls);
-    vdc_set_side_flip(walls);   /* (the mirror exact: each tile flipped too) */
+    /* (mirrored sides fade out and are drawn flipped, an exact mirror; carried ones neither) */
+    int mirrored = walls ? (VDC_SIDE_LEFT | VDC_SIDE_RIGHT) & ~room_walled : 0;
+    vdc_set_side_fade(mirrored);
+    vdc_set_side_flip(mirrored);
+    vdc_set_extra_sprites(walls && n_side_lantern ? side_lantern : NULL, walls ? n_side_lantern : 0);
+    vdc_set_map_patch(walls && room_patched ? room_patch : NULL);
     /* a menu sliding over to another page (its scroll moved in the last few frames): the
      * pages themselves across the whole picture (vdc_set_side_real) */
     {
@@ -2517,8 +2754,10 @@ void wide_off(Wide *w, Pce *p)
     vdc_set_wide_shift(0);
     vdc_set_side_tiles(NULL, NULL);
     vdc_set_side_real(false);
-    vdc_set_side_fade(false);
-    vdc_set_side_flip(false);
+    vdc_set_side_fade(0);
+    vdc_set_side_flip(0);
+    vdc_set_extra_sprites(NULL, 0);
+    vdc_set_map_patch(NULL);
     vdc_set_hide_corner(false);
     vdc_set_side_vram(NULL, 0, NULL, NULL);
     vdc_set_map_fill(NULL);
