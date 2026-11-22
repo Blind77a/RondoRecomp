@@ -374,6 +374,8 @@ const uint8_t *vdc_row_bg_edge(void) { return row_bg_edge; }
 void vdc_set_row_clip(const uint8_t *rows) { row_clip = rows; }
 static uint64_t sprite_hide;
 void vdc_set_sprite_hide(uint64_t mask) { sprite_hide = mask; }
+static bool hide_corner;
+void vdc_set_hide_corner(bool on) { hide_corner = on; }
 static int move_lo, move_hi = -1, move_dx;
 void vdc_set_sprite_move(int pattern_lo, int pattern_hi, int dx)
 {
@@ -481,6 +483,9 @@ static void render_sprites(Vdc *d, int y, int x0, int w, uint16_t *out)
         uint16_t pal = (uint16_t)(0x100 | (attr & 0xF) << 4);
         uint16_t front = (attr & 0x80) ? 0x8000 : 0;
         bool hidden = (sprite_hide >> i) & 1;
+        /* (parked above the screen, its last rows peeking in: hide_corner; as the menu's
+         * pages slide over, the parked flames move along with them, to the right of x 0) */
+        if (hide_corner && sy < 0 && sy + h <= 8) hidden = true;
         for (int c = 0; c < sw; c++) {
             int x = sx + c;
             if (x < 0 || x >= w) continue;

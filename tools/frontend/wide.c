@@ -2137,6 +2137,9 @@ void wide_frame(Wide *w, Pce *p)
      * sides) */
     bool walls = !show && !menu && want && w->room_sides && s == RONDO_PLAYING && mw >= 1 && room_sides(p, sky_room(r));
     vdc_set_side_tiles(menu || walls ? side_l : NULL, menu || walls ? side_r : NULL);
+    /* (the save menu's parked torch flames: all through its screens with widescreen on, the
+     * frames between pages too, which are not widened and showed them a moment) */
+    vdc_set_hide_corner(menu || (want && (s == RONDO_SAVE_MENU || s == RONDO_GAME_OVER)));
     vdc_set_side_fade(walls);
     vdc_set_side_flip(walls);   /* (the mirror exact: each tile flipped too) */
     /* a menu sliding over to another page (its scroll moved in the last few frames): the
@@ -2516,6 +2519,7 @@ void wide_off(Wide *w, Pce *p)
     vdc_set_side_real(false);
     vdc_set_side_fade(false);
     vdc_set_side_flip(false);
+    vdc_set_hide_corner(false);
     vdc_set_side_vram(NULL, 0, NULL, NULL);
     vdc_set_map_fill(NULL);
     vdc_set_sprite_move(0, -1, 0);

@@ -106,6 +106,11 @@ const uint8_t *vdc_row_bg_blank(void);
 const uint8_t *vdc_row_bg_edge(void);
 void vdc_set_row_clip(const uint8_t *rows);
 void vdc_set_sprite_hide(uint64_t mask);
+/* - vdc_set_hide_corner: sprites parked above the screen with at most their last 8 rows in it
+ *   (a game parks unused ones there: the save menu's torch flames, peeking into the picture's
+ *   top left) left out of the picture, counted as drawn as above. Widescreen's menus: a sliver
+ *   in the 4:3 picture's corner stood mid-picture there. */
+void vdc_set_hide_corner(bool on);
 /* - vdc_set_sprite_move: sprites whose pattern is pattern_lo..pattern_hi drawn dx px further
  *   right (widescreen: a boss's health bar at the picture's right edge); hi < lo for none. */
 void vdc_set_sprite_move(int pattern_lo, int pattern_hi, int dx);
