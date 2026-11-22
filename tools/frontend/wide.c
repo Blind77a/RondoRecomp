@@ -1540,8 +1540,12 @@ static void on_entry(Pce *p, void *ctx)
     w->open_seen = false;
     w->lim_seen = w->calm = false;
     w->room_age = 0;
-    set_patches(p, WORLD_PATCHES, w->want > 0 && scrolls);
-    set_patches(p, OBJECT_PATCHES, w->want > 0 && scrolls);
+    /* (not in the title state, $03: the save menu's Tactics demos start their rooms there, and
+     * wide_frame takes the changes out again outside gameplay, mid-column: the game came back
+     * from its column drawing to our code gone, and ran off; the demos stay 4:3) */
+    bool play = game_state(p) != RONDO_TITLE;
+    set_patches(p, WORLD_PATCHES, w->want > 0 && scrolls && play);
+    set_patches(p, OBJECT_PATCHES, w->want > 0 && scrolls && play);
     update_vars(p);
 }
 
@@ -1981,6 +1985,17 @@ void wide_frame(Wide *w, Pce *p)
      * under it and the game ran off into the I/O page (after area $1A's orb). Nothing is
      * changed until it is out of our code; the picture stays as it was for that frame. */
     if (p->cpu.mpr[7] == 0x00 && p->cpu.pc >= 0xFA00) return;
+    /* ... nor while the game is inside a column drawing called from our code at $FE1C (its
+     * return to $FE1F on the stack: the frame can end before it comes back) */
+    for (int sp = p->cpu.s + 1; sp < 0xFF; sp++)
+        if (p->wram[0x100 + sp] == 0x1E && p->wram[0x100 + sp + 1] == 0xFE) return;
+    /* Demos (state $03: the title's attract mode and the save menu's Tactics runs) are shown
+     * 4:3, widescreen off while they play; it comes back by itself after (they played wide
+     * as levels do, and went wrong: their rooms start in this state, which is not play) */
+    if (game_state(p) == RONDO_TITLE) {
+        if (p->vdc.wide || w->patched || w->active) wide_off(w, p);
+        return;
+    }
     layout_6f(p);
     uint8_t *r = p->wram;
     uint8_t s = game_state(p);
@@ -2122,6 +2137,9 @@ void wide_frame(Wide *w, Pce *p)
      * sides) */
     bool walls = !show && !menu && want && w->room_sides && s == RONDO_PLAYING && mw >= 1 && room_sides(p, sky_room(r));
     vdc_set_side_tiles(menu || walls ? side_l : NULL, menu || walls ? side_r : NULL);
+    /* (the save menu's parked torch flames: all through its screens with widescreen on, the
+     * frames between pages too, which are not widened and showed them a moment) */
+    vdc_set_hide_corner(menu || (want && (s == RONDO_SAVE_MENU || s == RONDO_GAME_OVER)));
     vdc_set_side_fade(walls);
     vdc_set_side_flip(walls);   /* (the mirror exact: each tile flipped too) */
     /* a menu sliding over to another page (its scroll moved in the last few frames): the
@@ -2501,6 +2519,7 @@ void wide_off(Wide *w, Pce *p)
     vdc_set_side_real(false);
     vdc_set_side_fade(false);
     vdc_set_side_flip(false);
+    vdc_set_hide_corner(false);
     vdc_set_side_vram(NULL, 0, NULL, NULL);
     vdc_set_map_fill(NULL);
     vdc_set_sprite_move(0, -1, 0);
