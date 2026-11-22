@@ -72,13 +72,16 @@ is out).
 
 ### Picture
 
+- **Torch glow** (Video > Improvements, off by default): the wall torches light the bricks
+  round them, their light flickering, each torch on its own rhythm (Stage 3's dungeon so
+  far: the torches are found by their exact flame and sconce colours).
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
 - **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as
   the burning town's sky, is drawn as the colour it stands for. Hand-drawn texture is left as
   it is.
 
-Both change only the picture: the game plays the same, and save states are unaffected.
+These change only the picture: the game plays the same, and save states are unaffected.
 
 ## Supported Platforms
 

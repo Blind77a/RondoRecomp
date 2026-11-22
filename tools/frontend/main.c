@@ -44,6 +44,7 @@
 #include "update.h"
 #include "wide.h"
 #include "dedither.h"
+#include "torchglow.h"
 #include "titleart.h"
 #include "title_art_data.h"
 
@@ -1439,6 +1440,21 @@ int main(int argc, char **argv)
                     dd_frame = (uint64_t)pce.frame;
                 }
                 fb = dd;
+            }
+            /* Video > Improvements > Torch glow (torchglow.h; only the picture: kept in
+             * hardcore), worked out once a game frame like the above */
+            if (set.torch_glow && !test_mode) {
+                static uint32_t tg[PCE_FB_MAX_W * PCE_FB_MAX_H];
+                static uint64_t tg_frame = UINT64_MAX;
+                static int tg_n;
+                static const uint32_t *tg_from;
+                if (ran_frame || tg_frame != (uint64_t)pce.frame || tg_from != fb) {
+                    int cam = (pce.wram[0x1E96] & 0x0F) << 8 | pce.wram[0x1E08];
+                    tg_n = torch_glow(fb, tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);
+                    tg_frame = (uint64_t)pce.frame;
+                    tg_from = fb;
+                }
+                if (tg_n) fb = tg;
             }
             /* Video > Title art: the player's art beside the title screen (titleart.h), while
              * the picture is not widened by the game itself */

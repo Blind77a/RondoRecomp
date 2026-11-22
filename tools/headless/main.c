@@ -17,6 +17,7 @@
 #include "../frontend/wide.h"
 #include "../frontend/titleart.h"
 #include "../frontend/dedither.h"
+#include "../frontend/torchglow.h"
 #include "recomp/recomp.h"
 #include "../recomp/capture_script.h"
 #include "util/png.h"
@@ -174,6 +175,7 @@ int main(int argc, char **argv)
         return 2;
     }
     long frames = 600, shot_every = 60;
+    bool torch_shots = false;      /* --torch-glow: screenshots with Torch glow */
     bool dedither_shots = false;   /* --dedither: screenshots with Smooth dithering */
     const char *out = "work/shots";
     bool log_bios = false, log_all = false;
@@ -327,6 +329,7 @@ int main(int argc, char **argv)
         }
         else if (!strcmp(argv[i], "--smooth-fades")) vce_set_smooth_fades(true);
         else if (!strcmp(argv[i], "--dedither")) dedither_shots = true;
+        else if (!strcmp(argv[i], "--torch-glow")) torch_shots = true;
         else if (!strcmp(argv[i], "--wide-skip") && i + 1 < argc) {   /* leave patches out: list of indexes */
             char tmp[128];
             snprintf(tmp, sizeof tmp, "%s", argv[++i]);
@@ -604,6 +607,10 @@ int main(int argc, char **argv)
             static uint32_t dd[PCE_FB_MAX_W * PCE_FB_MAX_H];
             if (dedither_shots) dedither(pce.vdc.fb, dd, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
             const uint32_t *shot = dedither_shots ? dd : pce.vdc.fb;
+            static uint32_t tg[PCE_FB_MAX_W * PCE_FB_MAX_H];
+            if (torch_shots && torch_glow(shot, tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame,
+                                          (pce.wram[0x1E96] & 0x0F) << 8 | pce.wram[0x1E08]))
+                shot = tg;
             int shot_w = pce.vdc.fb_w;
             static uint32_t ta[PCE_FB_MAX_W * PCE_FB_MAX_H];
             int fw = pce.vdc.fb_wide;

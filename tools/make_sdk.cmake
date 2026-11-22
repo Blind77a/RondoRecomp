@@ -35,6 +35,7 @@ set(FRONTEND_SOURCES
   tools/frontend/prompt.c
   tools/frontend/wide.c
   tools/frontend/dedither.c
+  tools/frontend/torchglow.c
   tools/frontend/titleart.c
   tools/frontend/input.c
   tools/frontend/binds.c
