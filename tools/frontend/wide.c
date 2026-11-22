@@ -501,25 +501,32 @@ static int hit_find(const uint8_t *page, const uint8_t *bytes, int len, int hint
     return -1;
 }
 
-/* Stage objects that remove themselves past a distance of their own, inside the wider
- * picture (found by their code's bytes in the stage's bank $81, like the hit test's). Stage 4's
- * swinging spiked balls on chains (kinds $C4 chain, $C3 ball): each chain piece removes itself
- * at screen X $160 or -$60, 96 px past the 4:3 screen, and the ball goes with it; with the
- * picture reaching 128 px out (Level ends) and the ball swinging some 60 px from its anchor,
- * it vanished in sight. Moved out to +-192 ($1C0 / -$C0) while the picture is wide. */
-static const struct { uint8_t len, at_r, at_l; uint8_t orig[21]; uint8_t wide_r, wide_l; } FAR_SITES[] = {
-    {21, 4, 15, {0xBD, 0xC8, 0x2B, 0xC9, 0x60, 0x90, 0x03, 0x4C, 0x54, 0x40, 0x60,
-                 0xBD, 0xC8, 0x2B, 0xC9, 0xA0, 0xB0, 0x03, 0x4C, 0x54, 0x40}, 0xC0, 0x40},
+/* Stage objects that act at a distance of their own from the 4:3 screen, inside the wider
+ * picture (found by their code's bytes in the stage's banks, like the hit test's):
+ * - Stage 4's swinging spiked balls on chains (bank $81; kinds $C4 chain, $C3 ball): each chain
+ *   piece removes itself at screen X $160 or -$60, 96 px past the 4:3 screen, and the ball goes
+ *   with it; with the picture reaching 128 px out (Level ends) and the ball swinging some 60 px
+ *   from its anchor, it vanished in sight. Moved out to +-192 ($1C0 / -$C0).
+ * - Stage 2's ship (bank $71, kind $BB, 71:D08C): the object that paints a girder's end into
+ *   the background map does so once it is within 64 px of the screen's left (X >= -$40), which
+ *   is the wide picture's left edge: the girder appeared in sight. From -$80 instead (it runs at
+ *   any distance: its flags leave out the game's distance gate, 70:A09D). keep_tiles keeps the
+ *   tiles if a column drawn afterwards would put the level's blank cells back.
+ * Both while the picture is wide. */
+static const struct { uint8_t bank, len, at_r, at_l; uint8_t orig[21]; uint8_t wide_r, wide_l; } FAR_SITES[] = {
+    {0x81, 21, 4, 15, {0xBD, 0xC8, 0x2B, 0xC9, 0x60, 0x90, 0x03, 0x4C, 0x54, 0x40, 0x60,
+                       0xBD, 0xC8, 0x2B, 0xC9, 0xA0, 0xB0, 0x03, 0x4C, 0x54, 0x40}, 0xC0, 0x40},
+    {0x71, 16, 13, 13, {0xBD, 0x70, 0x2B, 0x10, 0x0B, 0xC9, 0xFF, 0xD0, 0xF3,
+                        0xBD, 0xC8, 0x2B, 0xC9, 0xC0, 0x90, 0xEC}, 0x80, 0x80},
 };
 #define N_FAR (int)(sizeof FAR_SITES / sizeof FAR_SITES[0])
-static int far_at[N_FAR] = {-1};
+static int far_at[N_FAR] = {-1, -1};
 
 static void far_patches(Pce *p, bool on)
 {
-    uint8_t *page = p->page[0x81];
-    if (!page) return;
-    bool changed = false;
     for (int k = 0; k < N_FAR; k++) {
+        uint8_t *page = p->page[FAR_SITES[k].bank];
+        if (!page) continue;
         uint8_t want[21];
         memcpy(want, FAR_SITES[k].orig, FAR_SITES[k].len);
         want[FAR_SITES[k].at_r] = FAR_SITES[k].wide_r;
@@ -532,9 +539,8 @@ static void far_patches(Pce *p, bool on)
         if (at_ < 0) continue;
         memcpy(page + at_, to, len);
         far_at[k] = at_;
-        changed = true;
+        p->cpu.page_gen[FAR_SITES[k].bank]++;
     }
-    if (changed) p->cpu.page_gen[0x81]++;
 }
 
 /* The game removes objects more than 128 px past its screen (70:A06C: X < -$80, 70:A079:
