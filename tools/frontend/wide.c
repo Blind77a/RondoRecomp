@@ -507,7 +507,9 @@ static int hit_find(const uint8_t *page, const uint8_t *bytes, int len, int hint
  *   from its anchor, it vanished in sight. Moved out to +-192 ($1C0 / -$C0).
  * - Stage 2's ship (bank $71, kind $BB, 71:D08C): the object that paints a girder's end into
  *   the background map does so once it is within 64 px of the screen's left (X >= -$40), which
- *   is the wide picture's left edge: the girder appeared in sight. From -$80 instead (it runs at
+ *   is the wide picture's left edge: the girder appeared in sight. From -$70 instead (from -$80
+ *   it also painted where the 512 px map holds the room further on: girder tiles left under
+ *   the next part's spiked chairs; -$70 keeps it clear and shows most of the girder early) (it runs at
  *   any distance: its flags leave out the game's distance gate, 70:A09D). keep_tiles keeps the
  *   tiles if a column drawn afterwards would put the level's blank cells back.
  * Both while the picture is wide. */
@@ -515,7 +517,7 @@ static const struct { uint8_t bank, len, at_r, at_l; uint8_t orig[21]; uint8_t w
     {0x81, 21, 4, 15, {0xBD, 0xC8, 0x2B, 0xC9, 0x60, 0x90, 0x03, 0x4C, 0x54, 0x40, 0x60,
                        0xBD, 0xC8, 0x2B, 0xC9, 0xA0, 0xB0, 0x03, 0x4C, 0x54, 0x40}, 0xC0, 0x40},
     {0x71, 16, 13, 13, {0xBD, 0x70, 0x2B, 0x10, 0x0B, 0xC9, 0xFF, 0xD0, 0xF3,
-                        0xBD, 0xC8, 0x2B, 0xC9, 0xC0, 0x90, 0xEC}, 0x80, 0x80},
+                        0xBD, 0xC8, 0x2B, 0xC9, 0xC0, 0x90, 0xEC}, 0x90, 0x90},
 };
 #define N_FAR (int)(sizeof FAR_SITES / sizeof FAR_SITES[0])
 static int far_at[N_FAR] = {-1, -1};
@@ -986,8 +988,10 @@ static bool keep_on;
 static void keep_reset(void) { keep_on = false; }
 
 /* the level position (8 px units) a map cell stands for: the 512 px from 192 before the
- * camera while it goes left (objects made and columns drawn on that side), from 64 before
- * while it goes right (`before`); rows from 128 px above */
+ * camera while it goes left (objects made and columns drawn on that side), from 112 before
+ * while it goes right (`before`, as rows are drawn, 6F:A8EC; with 64, the girder painted
+ * further left on Stage 2's ship, far_patches, was taken for the place 512 px right, and put
+ * over the chairs there as that column was drawn); rows from 128 px above */
 static int keep_dir;   /* -1 left, 1 right */
 static int keep_pos(int cell, int cam, int map_px, int before)
 {
@@ -1042,7 +1046,7 @@ static void keep_tiles(Pce *p, bool on)
     }
     for (int c = 0; c < mw; c++) {
         if (!col_n[c]) continue;
-        int lx = keep_pos(c, cx, mw * 8, keep_dir < 0 ? 192 : 64);
+        int lx = keep_pos(c, cx, mw * 8, keep_dir < 0 ? 192 : 112);
         /* (the game draws columns and rows in as they come, off its screen; what it draws
          * again on it, as a drawbridge laid down, is its own) */
         bool off_x = lx * 8 + 8 <= cx - 48 || lx * 8 >= cx + 256 + 48;
