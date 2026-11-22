@@ -96,11 +96,12 @@ is out).
 - **Night sky** (Video > Improvements, off by default): the stars over Stage 2's docks
   twinkle faintly, and once in a while (about once a minute) a small shooting star crosses
   the sky.
+
+  ![Sail sway and Night sky on Stage 2's docks](https://github.com/user-attachments/assets/01108ab8-c202-4dca-bf8e-6d044abff975)
+
 - **Shield shine** (Video > Improvements, off by default): now and then (3 to 7 s apart) a
   glint of light runs round the rim of one of the heraldic shields on Stage 2's docks, picked
   at random (sometimes two); the shields' faces are left as they are.
-
-  ![Sail sway, Night sky and Shield shine on Stage 2's docks](https://github.com/user-attachments/assets/01108ab8-c202-4dca-bf8e-6d044abff975)
 
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
