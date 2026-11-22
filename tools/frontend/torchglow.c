@@ -157,8 +157,12 @@ int moon_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame)
                 n++;
             }
     if (n < 120 || x1 - x0 > 48 || y1 - y0 > 48) return 0;
-    float cx = (float)(x0 + x1) * 0.5f, cy = (float)(y0 + y1) * 0.5f;
-    float r0 = (float)((x1 - x0) > (y1 - y0) ? (x1 - x0) : (y1 - y0)) * 0.5f;
+    /* (its size from its width and its middle from its bottom: clouds cross its top, and a few
+     * of their pixels above it are in its colours, so its height is not its own; with the
+     * middle worked out from the height the ring sat inside its lower left, a dark gap left
+     * between them) */
+    float r0 = (float)(x1 - x0 + 1) * 0.5f;
+    float cx = (float)(x0 + x1) * 0.5f, cy = (float)y1 + 0.5f - r0;
     float br = 0.95f + 0.05f * sinf((float)(frame % 160) * 6.2831853f / 160.0f);
     float reach = 9.0f * br;
     int lx = (int)(cx - r0 - reach) - 1, hx = (int)(cx + r0 + reach) + 1;
@@ -173,7 +177,8 @@ int moon_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame)
             int r = p >> 16 & 0xFF, g = p >> 8 & 0xFF, b = p & 0xFF;
             if (r > 0x24 || g > 0x24 || b < 0x24) continue;   /* (the sky's blues only) */
             float dx = (float)x - cx, dy = (float)y - cy, e = sqrtf(dx * dx + dy * dy) - r0;
-            if (e < 0.0f || e >= reach) continue;
+            if (e < -1.5f || e >= reach) continue;   /* (sky up to its very edge: no gap) */
+            if (e < 0.0f) e = 0.0f;
             float a = (1.0f - e / reach) * (1.0f - e / reach) * 0.22f * br;
             img[y * pitch + x] = 0xFF000000u | (uint32_t)clampf((float)r + 120.0f * a) << 16 |
                                  (uint32_t)clampf((float)g + 150.0f * a) << 8 | (uint32_t)clampf((float)b + 190.0f * a);
