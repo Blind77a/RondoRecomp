@@ -228,6 +228,10 @@ Gameplay   Skip cinematics: Press START, Automatically, or Never. During the log
            from his hand; the d-pad swings it around (it still hurts what it touches) and
            letting go of Attack ends it. Ideas from Pizzano's Super Rondo of Blood hack,
            made anew for RondoRecomp (none of the hack is used)
+           Sticky stairs (off by default): a jump that comes down onto stairs lands on
+           them without holding Up (Up is held for you while you come down, unless you
+           attack or hold Down; after a whip in the jump too, once the whip is put away).
+           Not in RetroAchievements hardcore mode
            Run (on by default): holding the Run control (LB / S) runs, as in Symphony of
            the Night (see Controls above); off, it does nothing
 RetroAchievements
