@@ -55,11 +55,15 @@ typedef struct Wide {
      * not shifted until the camera has gone 128 px from calm_cam */
     int lim_lo, lim_hi;
     bool lim_seen, calm;
+    bool calm_black;       /* ... in a new room whose graphics differ: black past its walls
+                            * after all (beyond_door) */
     int calm_cam;
     int inside_shift;      /* the shift while the camera was last within the room's limits */
     int menu_good;         /* frames in a row a menu's sides could be filled (to MENU_FRAMES) */
     int menu_bad;          /* ... and since then could not */
     int menu_bxr, menu_moved;   /* a menu's sideways scroll last frame, frames it has not moved */
+    bool edge_live;        /* edge spawns are moved out this frame (wide_frame, and as the
+                            * sprites are built: edge_spawns_at_build) */
     int gen_r, gen_l;      /* screen-fixed generators moved this far out (0 = where the game
                             * put them, 64 px) */
     /* bookkeeping */

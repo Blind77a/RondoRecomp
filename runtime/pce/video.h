@@ -136,6 +136,13 @@ void vdc_set_side_real(bool on);
  * towards its outer edges, to black at them (widescreen's walls repeated beside a room kept
  * 4:3, so they recede rather than stand as part of the room). */
 void vdc_set_side_fade(bool on);
+/* Side VRAM (host-side, like the above): beyond the original 256 pixels on one side (-1 left,
+ * 1 right), the background drawn from this copy of VRAM (map and tiles) instead, its map read
+ * dx[line], dy[line] pixels on from where the scroll points (a line of the picture each);
+ * NULL = off
+ * (widescreen: the room left behind through a door, as it was before the next part's
+ * graphics were loaded). */
+void vdc_set_side_vram(const uint16_t *vram, int side, const int16_t *dx, const int16_t *dy);
 const uint16_t *vdc_row_map_y(void);
 /* Map fill (host-side, like the above): background map entries drawn instead of the map's
  * own beside the original 256 pixels, by map position: fill[row * VDC_FILL_W + column]

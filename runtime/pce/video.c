@@ -293,6 +293,16 @@ static bool side_fade;
 void vdc_set_side_fade(bool on) { side_fade = on; }
 static const uint16_t *map_fill;
 void vdc_set_map_fill(const uint16_t *fill) { map_fill = fill; }
+static const uint16_t *side_vram;
+static int side_vram_side;
+static const int16_t *side_vram_dx, *side_vram_dy;
+void vdc_set_side_vram(const uint16_t *vram, int side, const int16_t *dx, const int16_t *dy)
+{
+    side_vram = vram;
+    side_vram_side = side;
+    side_vram_dx = dx;
+    side_vram_dy = dy;
+}
 
 /* ---- timing ---------------------------------------------------------------- */
 
@@ -359,7 +369,7 @@ void vdc_set_sprite_move(int pattern_lo, int pattern_hi, int dx)
 }
 
 /* x0: screen x of out[0] (negative in widescreen) */
-static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out)
+static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out, int line)
 {
     static const int map_w[4] = {32, 64, 128, 128};
     uint16_t mwr = d->reg[R_MWR];
@@ -376,8 +386,20 @@ static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out)
     int first = bxr >> 3, last = (bxr + 255) >> 3;
     const uint16_t *sl = sides ? &side_left[(py >> 3) * VDC_SIDE_TILES] : NULL;
     const uint16_t *sr = sides ? &side_right[(py >> 3) * VDC_SIDE_TILES] : NULL;
+    const uint16_t *own_map = map;
     for (int x = 0; x < w; x++) {
         int px = (sx + x) & (mw * 8 - 1);
+        /* (side VRAM: beyond the original 256 pixels on its side, map and tiles from it) */
+        const uint16_t *v = d->vram;
+        map = own_map;
+        int prow = row;
+        if (side_vram && (side_vram_side < 0 ? x0 + x < 0 : x0 + x >= 256)) {
+            int spy = (y + side_vram_dy[line]) & (mh * 8 - 1);
+            v = side_vram;
+            map = &side_vram[(spy >> 3) * mw];
+            px = (sx + x + side_vram_dx[line]) & (mw * 8 - 1);
+            prow = spy & 7;
+        }
         uint16_t e = map[px >> 3];
         if (map_fill && w > 256 && (x0 + x < 0 || x0 + x >= 256)) {
             /* beside the original 256 pixels: the map's own entry, or its fill */
@@ -397,8 +419,8 @@ static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out)
                 }
             }
         }
-        uint32_t base = ((uint32_t)(e & 0x7FF) * 16 + row) & 0x7FFF;
-        uint16_t p01 = d->vram[base], p23 = d->vram[(base + 8) & 0x7FFF];
+        uint32_t base = ((uint32_t)(e & 0x7FF) * 16 + prow) & 0x7FFF;
+        uint16_t p01 = v[base], p23 = v[(base + 8) & 0x7FFF];
         int bit = 7 - (px & 7);
         int c = ((p01 >> bit) & 1) | ((p01 >> (8 + bit)) & 1) << 1 |
                 ((p23 >> bit) & 1) << 2 | ((p23 >> (8 + bit)) & 1) << 3;
@@ -486,7 +508,7 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line)
     int orig = d->fb_wide - fb_shift;   /* where the original 256 pixels start */
     row_scroll[row] = d->reg[R_BXR] & 0x3FF;
     row_map_y[row] = (uint16_t)y;
-    if (cr & 0x80) render_bg(d, y, x0, w, bg);
+    if (cr & 0x80) render_bg(d, y, x0, w, bg, row);
     if (cr & 0x40) render_sprites(d, row, x0, w, sp);
     if (side_left && side_right && d->fb_wide && !side_real) {
         /* side tiles: no sprites beside the original 256 pixels (a game parks the ones it

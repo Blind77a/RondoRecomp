@@ -12,6 +12,7 @@
 #include "pce/state.h"
 #include "../frontend/game.h"
 #include "../frontend/moves.h"
+#include "../frontend/pausemenu.h"
 #include "../frontend/prompt.h"
 #include "../frontend/wide.h"
 #include "../frontend/titleart.h"
@@ -205,10 +206,11 @@ int main(int argc, char **argv)
     int prompt_dev = -1;   /* --prompt pad|keys: the title's PUSH RUN BUTTON! as rondo.exe shows it */
     long layout_dump_at = -1;          /* --dump-layout FRAME:FILE: for the title art converter (titleart.h) */
     char layout_dump_path[256] = "";
-    long vram_dump_at = -1;            /* --dump-vram FRAME:FILE: all of VRAM after that frame */
+    long vram_dump_at[32];             /* --dump-vram FRAME:FILE: all of VRAM after that frame (up to 32) */
+    int n_vram_dump = 0;
     long adpcm_dump_at = -1;           /* --dump-adpcm FRAME:FILE: the 64 KiB of ADPCM RAM */
     char adpcm_dump_path[256] = "";
-    char vram_dump_path[256] = "";
+    static char vram_dump_path[32][256];
     long run_at[16][2]; /* --run FRAME:LEN: hold the run button */
     int n_run = 0;
     long rows_from = -1, rows_to = -1;   /* --row-scroll A:B: each frame's bands of rows by X scroll */
@@ -217,6 +219,9 @@ int main(int argc, char **argv)
     bool wide_edges = false;   /* --wide-edges: Video > Level ends */
     bool wide_menus = false;   /* --wide-menus: Video > Wide menus */
     bool no_room_sides = false, near_spawns = false, no_open_arenas = false;
+    bool pause_menu_on = false;
+    static PauseMenu pm;
+    long save_progress_at = -1;   /* --save-progress FRAME: game_save_progress, the record before and after printed */
     long wide_off_at = 0;   /* --wide-off-at FRAME: widescreen off from then (4:3 from a widened save) */
     static TitleArt title_art;   /* --title-art FILE: 396 x 228 ARGB, raw (titleart.h): shots of the title with it */
     int last_shift = 0;
@@ -295,7 +300,9 @@ int main(int argc, char **argv)
         }
         else if (!strcmp(argv[i], "--prompt") && i + 1 < argc) prompt_dev = !strcmp(argv[++i], "pad");
         else if (!strcmp(argv[i], "--dump-layout") && i + 1 < argc) sscanf(argv[++i], "%ld:%255s", &layout_dump_at, layout_dump_path);
-        else if (!strcmp(argv[i], "--dump-vram") && i + 1 < argc) sscanf(argv[++i], "%ld:%255s", &vram_dump_at, vram_dump_path);
+        else if (!strcmp(argv[i], "--dump-vram") && i + 1 < argc && n_vram_dump < 32) {
+            if (sscanf(argv[++i], "%ld:%255s", &vram_dump_at[n_vram_dump], vram_dump_path[n_vram_dump]) == 2) n_vram_dump++;
+        }
         else if (!strcmp(argv[i], "--dump-adpcm") && i + 1 < argc) sscanf(argv[++i], "%ld:%255s", &adpcm_dump_at, adpcm_dump_path);
         else if (!strcmp(argv[i], "--run") && i + 1 < argc && n_run < 16) {
             if (sscanf(argv[++i], "%ld:%ld", &run_at[n_run][0], &run_at[n_run][1]) == 2) n_run++;
@@ -305,7 +312,9 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--wide-menus")) wide_menus = true;   /* Video > Wide menus */
         else if (!strcmp(argv[i], "--no-room-sides")) no_room_sides = true;   /* Video > Room sides off */
         else if (!strcmp(argv[i], "--near-spawns")) near_spawns = true;   /* Video > Spawn distance: Near */
+        else if (!strcmp(argv[i], "--pause-menu")) pause_menu_on = true;   /* the in-game pause menu (pausemenu.h) */
         else if (!strcmp(argv[i], "--no-open-arenas")) no_open_arenas = true;   /* Video > Open arenas off */
+        else if (!strcmp(argv[i], "--save-progress") && i + 1 < argc) save_progress_at = atol(argv[++i]);   /* the menu's Save & exit, after that frame */
         else if (!strcmp(argv[i], "--wide-off-at") && i + 1 < argc) wide_off_at = atol(argv[++i]);
         else if (!strcmp(argv[i], "--title-art") && i + 1 < argc) {
             static uint32_t tpx[TITLEART_W * TITLEART_FILE_H];
@@ -459,6 +468,7 @@ int main(int argc, char **argv)
             if (f >= poke[i].from && f <= poke[i].to) pce.wram[poke[i].addr] = (uint8_t)poke[i].val;
         if (skip_cine && game_in_cinematic(&pce)) { pce.pad = 0; skipped++; }
         pce.pad = moves_pad(&moves, &pce, &move_opts, pce.pad, pce.pad & PAD_II);
+        if (pause_menu_on) pce.pad = pause_menu_pad(&pm, &pce, pce.pad, true);
         if (prompt_dev >= 0) prompt_before_frame(&tp, &pce);
         if (wide_off_at && f == wide_off_at) { wd.want = 0; wide_off(&wd, &pce); }
         wide_frame(&wd, &pce);
@@ -469,6 +479,14 @@ int main(int argc, char **argv)
         moves_before_frame(&moves, &pce, &move_opts, true);
         pce_run_frame(&pce);
         if (prompt_dev >= 0) prompt_after_frame(&tp, &pce);
+        if (pause_menu_on) {
+            if (!pause_menu_draw(&pm, &pce)) printf("pause menu: the game's letters not found on the disc\n");
+            if (pm.want_exit) {
+                pm.want_exit = false;
+                const char *why = game_save_progress(&pce);
+                printf("pause menu: SAVE & END at frame %ld: %s\n", f, why ? why : "saved");
+            }
+        }
         for (int i = 0; i < n_wrep; i++)
             if (wrep_at[i] == f + 1) {
                 char buf[4096];
@@ -528,8 +546,24 @@ int main(int argc, char **argv)
                     printf("\n");
                 }
             }
-        if (vram_dump_at == f + 1) {
-            FILE *vf = fopen(vram_dump_path, "wb");
+        if (save_progress_at == f + 1) {
+            static const uint8_t NAME[12] = {0x58, 0x20, 'D', 'R', 'A', 'C', 'U', 'L', 'A', ' ', 'X', ' '};
+            uint8_t before[0x90], after[0x90];
+            int done = 0;
+            bram_read(&pce, NAME, before, sizeof before, 0, &done);
+            const char *why = game_save_progress(&pce);
+            bram_read(&pce, NAME, after, sizeof after, 0, &done);
+            printf("save progress: %s (file $27 = %02X, score %02X%02X)\n", why ? why : "saved", pce.wram[0x27], pce.wram[0x97], pce.wram[0x96]);
+            for (int k = 0; k < 0x90; k += 16) {
+                printf("  %02X before:", k);
+                for (int j = 0; j < 16; j++) printf(" %02X", before[k + j]);
+                printf("\n  %02X after: ", k);
+                for (int j = 0; j < 16; j++) printf(" %02X", after[k + j]);
+                printf("\n");
+            }
+        }
+        for (int vd = 0; vd < n_vram_dump; vd++) if (vram_dump_at[vd] == f + 1) {
+            FILE *vf = fopen(vram_dump_path[vd], "wb");
             if (vf) { fwrite(pce.vdc.vram, 2, 0x8000, vf); fclose(vf); }
         }
         if (layout_dump_at == f + 1) {

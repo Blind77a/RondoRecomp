@@ -20,6 +20,7 @@ typedef enum {
     MENU_SETTINGS_CHANGED, /* anything else: save settings.ini */
     MENU_PLAY,             /* start screen: start the game */
     MENU_START_SCREEN,     /* in-game menu: back to the start screen */
+    MENU_SAVE_EXIT,        /* in-game menu: save the game's progress (as GAME OVER's SAVE & END) and go to the start screen */
     MENU_SETUP,            /* start screen: open RondoRecomp Setup (add a disc, rebuild) */
     MENU_RESET_CONTROLS,   /* Controls page: every control back to its default (handled here) */
     MENU_ACH_CHANGED,      /* RetroAchievements on / off, hardcore: apply and save */

@@ -7,50 +7,78 @@ Static recompilation of *Castlevania: Rondo of Blood* (PC Engine Super CD-ROM²)
 
 ## Changes in this fork
 
-This fork of [gminustwo/RondoRecomp](https://github.com/gminustwo/RondoRecomp) adds these
-options to the in-game menu's Video page (F1 / Back):
+This fork of [gminustwo/RondoRecomp](https://github.com/gminustwo/RondoRecomp) adds the
+features below. Options are in the in-game menu (F1 / Back); see
+[docs/PLAYER_README.txt](docs/PLAYER_README.txt) for the details of each.
 
-- **Widescreen 16:9** (off by default): shows more of the level on each side, 42 game pixels
-  a side with the TV's 4:3 pixels and 64 with square pixels (stretched the last 4% or so to fill 16:9). Background, enemies, items and
-  Stage 2's rain fill the wider picture, and the score display moves to the left edge. A boss
-  that locks the camera mid-level keeps the wide picture. Rooms the camera doesn't scroll
-  through sideways (shafts, boss rooms) keep their 4:3 picture (see Room sides). Off in
-  RetroAchievements hardcore mode.
+### Widescreen 16:9 (experimental)
+
+Video > Widescreen (experimental) holds the widescreen options, each with a help line at the
+bottom of the menu.
+
+- **Widescreen** (off by default): shows more of the level on each side, 42 game pixels a
+  side with the TV's 4:3 pixels and 64 with square pixels (stretched the last 4% or so to fill
+  16:9). Background, enemies, items and Stage 2's rain fill the wider picture; the HUD and a
+  boss's health bar stay at the screen's edges; scenery the game drew only as wide as the 4:3
+  screen is carried on (Stage 2's bridge). Off in RetroAchievements hardcore mode.
 - **Level ends** (on by default): at the start or end of a level, the extra width goes to the
-  side the level continues on, so there's no black past the level's wall. The picture stays
-  still until Richter has walked far enough for the camera to scroll, and enemies on that side
-  appear further out so they don't pop into view.
-- **Spawn distance** (Far by default): with Far, enemies and items come to life further out so
-  they enter the wider picture from beyond it; Near makes them where the 4:3 game does, for its
-  exact timing.
+  side the level continues on, so there's no black past the level's wall.
+- **Spawn distance** (Far by default): Far brings enemies and items to life further out, so
+  they enter the wider picture from beyond it; Near makes them where the 4:3 game does.
 - **Room sides** (on by default): rooms that keep the 4:3 picture (boss rooms, shafts) show the
   room mirrored at each side, fading to black, instead of black bars.
 - **Open arenas** (on by default): boss rooms that lock the camera to one screen but have no
-  wall at their sides are played across the whole 16:9 picture: Richter can walk out to its
-  edges while the arena stays still on screen (the game's camera follows him inside the
-  wider arena, the picture shifted back). The boss places itself by the game's own screen,
-  so it leans a little towards Richter's side. So far: Stage 3's giant three-eyed skull.
-- **Wide menus** (on by default): the file select menus go widescreen too, with their wavy
-  background carried on seamlessly to the sides. Screens whose art doesn't repeat (the title
-  screen, story scenes) stay 4:3.
-- **Title art** (on by default, with widescreen): the title screen and the stage map widened
-  with clouds of their own, built into the game. The art holds only the sides, as the game's
-  own colour numbers, plus the screen's tile layout to recognise it by: none of the game's
-  picture. It appears with the screen from its first frame and fades and flashes with it,
-  lightning included. A `title_sides.png` or `map_sides.png` of your own in the profile folder
-  is used instead.
+  wall at their sides are played across the whole 16:9 picture, Richter free to walk to its
+  edges. So far: Stage 3's giant three-eyed skull.
+- **Wide menus** (on by default): the file select menus and the continue screen go
+  widescreen too, their backgrounds carried on to the sides.
+- **Title art** (on by default): the title screen and the stage map widened with clouds of
+  their own, built in (the art holds only the sides, as colour numbers: none of the game's
+  picture). A `title_sides.png` or `map_sides.png` of your own in the profile folder is used
+  instead.
+
+What widescreen also takes care of:
+
+- A boss that locks the camera mid-level keeps the wide picture.
+- Doors: the next area shows beside the door as you go through; the room you leave stays
+  whole on the other side; the door you came through stays in place in the next room (at its
+  height, up stairs too); a next room with graphics of its own shows black past its wall
+  instead of the old room's leftovers.
+- Enemies sent in from just past the screen's edges come from beyond the wider picture's
+  edges, never popping in inside it.
+- Background objects (the figure on Stage 2's boss tower) stay where the game puts them.
+- GAME OVER: the frozen level and the continue screen are both 16:9.
+- Weapons hit enemies anywhere in the wider picture.
+
+### Pause menu
+
+The game's own pause screen (RUN / START) shows a menu in the game's own letters with its
+heart cursor, read from your disc (the GAME OVER screen's): nothing of the game is in this
+program.
+
+- **CONTINUE** (the default): carries on.
+- **SAVE & END**: saves your progress the way GAME OVER's SAVE & END does (cleared stages and
+  the score total), without using a continue, and goes to the start screen.
+- **PLAYER CHANGE** (with Maria unlocked): switches to the other character and starts the
+  stage again from its start, keeping your lives and score.
+
+Up / Down choose, RUN or Jump confirms.
+
+### Sticky stairs
+
+Gameplay > Sticky stairs (off by default): a jump comes down onto stairs without Up held,
+whip or no whip during the jump (Up is held for you while coming down, except while the whip
+is out).
+
+### Picture
+
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
 - **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as
   the burning town's sky, is drawn as the colour it stands for. Hand-drawn texture is left as
   it is.
 
-Widescreen also keeps the HUD and a boss's health bar at the screen's edges, brings enemies
-in from beyond the wider edges, and carries on scenery the game drew only as wide as the
-4:3 screen (Stage 2's bridge).
-
-Smooth fades and Smooth dithering change only the picture: the game plays the same, and save
-states are unaffected. See [docs/PLAYER_README.txt](docs/PLAYER_README.txt) for details.
+Both change only the picture: the game plays the same, and save states are unaffected.
 
 ## Supported Platforms
 

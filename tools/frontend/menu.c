@@ -10,7 +10,7 @@
 #include "theme.h"
 #include "video.h"
 
-enum { PAGE_MAIN, PAGE_VIDEO, PAGE_GAMEPLAY, PAGE_CHEATS, PAGE_CONTROLS, PAGE_START, PAGE_ACH, PAGE_UPDATE, PAGE_COUNT };
+enum { PAGE_MAIN, PAGE_VIDEO, PAGE_GAMEPLAY, PAGE_CHEATS, PAGE_CONTROLS, PAGE_START, PAGE_ACH, PAGE_UPDATE, PAGE_WIDE, PAGE_COUNT };
 
 /* IT_EDIT: a text field (arg 0: the Settings string at field, n_choices its size; arg 1: the
  * password, kept in the Menu); IT_INFO: a status line, Menu.ach[arg] (0-1), Menu.upd[arg - 2] */
@@ -82,13 +82,7 @@ static const Item START_ITEMS[] = {
 static const Item VIDEO_ITEMS[] = {
     TOGGLE("Fullscreen", fullscreen, MENU_VIDEO_CHANGED),
     TOGGLE("VSync", vsync, MENU_VIDEO_CHANGED),
-    {IT_TOGGLE, "Widescreen", 0, F_BOOL(widescreen), WIDES, 2, 0, MENU_SETTINGS_CHANGED},
-    {IT_TOGGLE, "Level ends", 0, F_BOOL(wide_edges), EDGES, 2, 0, MENU_SETTINGS_CHANGED},
-    TOGGLE("Wide menus", wide_menus, MENU_SETTINGS_CHANGED),
-    TOGGLE("Room sides", room_sides, MENU_SETTINGS_CHANGED),
-    TOGGLE("Open arenas", open_arenas, MENU_SETTINGS_CHANGED),
-    {IT_TOGGLE, "Spawn distance", 0, F_BOOL(near_spawns), SPAWNS, 2, 0, MENU_SETTINGS_CHANGED},
-    TOGGLE("Title art", title_art, MENU_SETTINGS_CHANGED),
+    {IT_PAGE, "Widescreen (experimental)", PAGE_WIDE, 0, NULL, 0, 0, 0},
     CHOICE("Aspect ratio", aspect, ASPECTS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Size", scaling, SCALINGS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Filter", filter, FILTERS, 0, MENU_SETTINGS_CHANGED),
@@ -97,6 +91,17 @@ static const Item VIDEO_ITEMS[] = {
     CHOICE("Beside the picture", sides, SIDES, 0, MENU_SETTINGS_CHANGED),
     TOGGLE("Smooth fades", smooth_fades, MENU_SETTINGS_CHANGED),
     TOGGLE("Smooth dithering", smooth_dither, MENU_SETTINGS_CHANGED),
+    {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
+};
+/* Video > Widescreen (experimental): 16:9 and everything that goes with it (wide.h) */
+static const Item WIDE_ITEMS[] = {
+    {IT_TOGGLE, "Widescreen", 0, F_BOOL(widescreen), WIDES, 2, 0, MENU_SETTINGS_CHANGED},
+    {IT_TOGGLE, "Level ends", 0, F_BOOL(wide_edges), EDGES, 2, 0, MENU_SETTINGS_CHANGED},
+    TOGGLE("Wide menus", wide_menus, MENU_SETTINGS_CHANGED),
+    TOGGLE("Room sides", room_sides, MENU_SETTINGS_CHANGED),
+    TOGGLE("Open arenas", open_arenas, MENU_SETTINGS_CHANGED),
+    {IT_TOGGLE, "Spawn distance", 0, F_BOOL(near_spawns), SPAWNS, 2, 0, MENU_SETTINGS_CHANGED},
+    TOGGLE("Title art", title_art, MENU_SETTINGS_CHANGED),
     {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
 };
 static const Item GAMEPLAY_ITEMS[] = {
@@ -176,6 +181,7 @@ static const struct { const char *title; const Item *items; int n; int parent; }
     {"Main Menu", START_ITEMS, (int)(sizeof START_ITEMS / sizeof START_ITEMS[0]), -1},
     {"Achievements", ACH_ITEMS, (int)(sizeof ACH_ITEMS / sizeof ACH_ITEMS[0]), PAGE_MAIN},
     {"Updates", UPDATE_ITEMS, (int)(sizeof UPDATE_ITEMS / sizeof UPDATE_ITEMS[0]), PAGE_MAIN},
+    {"Widescreen (experimental)", WIDE_ITEMS, (int)(sizeof WIDE_ITEMS / sizeof WIDE_ITEMS[0]), PAGE_VIDEO},
 };
 
 /* What the selected item does: the footer's help line. */
@@ -197,8 +203,15 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Fullscreen", "Use the whole screen at its own resolution (F11)."},
     {"VSync", "Show each frame when the screen refreshes: no tearing. Off: at once, maybe torn."},
     {"Spawn distance", "With widescreen: Far brings enemies in from beyond the wider picture; Near makes them where 4:3 does, the game's own timing."},
+    {"Level ends", "With widescreen, at a level's start or end: the picture moves over so nothing past its wall shows, or black there."},
+    {"Wide menus", "With widescreen, the file select menus drawn 16:9 too, their background carried on to the sides."},
+    {"Title art", "With widescreen, the title screen and the stage map widened with art of their own beside them."},
+    {"Smooth fades", "The game's fades in and out blended smoothly in full colour, not in the console's 8 steps."},
+    {"Smooth dithering", "The dot patterns the game mixes two colours with drawn as the smooth colour they stand for."},
     {"Room sides", "With widescreen, boss rooms and other one-screen rooms mirrored at the sides, fading to black."},
     {"Open arenas", "With widescreen, boss rooms with no wall at their sides played across the whole 16:9 picture (Stage 3's skull)."},
+    {"Save & exit", "Save your progress as GAME OVER's SAVE & END does, then go to the start screen."},
+    {"Widescreen (experimental)", "16:9 and its options: more of the level each side."},
     {"Widescreen", "16:9: more of the level each side. Experimental: some rooms stay 4:3; glitches possible."},
     {"Aspect ratio", "4:3 as on a TV, square pixels, or stretched to fill."},
     {"Size", "As big as the screen allows, or whole multiples only."},

@@ -108,7 +108,12 @@ uint8_t moves_pad(Moves *m, const Pce *p, const MoveOptions *o, uint8_t pad, boo
     if (o->stair_catch && game_playing(p) && !attack_held && !(pad & (PAD_DOWN | PAD_II))) {
         uint8_t st = p->wram[OBJ_STATE];
         int16_t vy = (int16_t)(p->wram[OBJ_VY_HI] << 8 | p->wram[OBJ_VY_LO]);
-        if (vy > 0 && st != 0x04 && st != 0x05 && st != RICHTER_JUMP_ATTACK) pad |= PAD_UP;
+        /* (a jump attack only while the whip is out: Up would end the strike. After it the
+         * game keeps Richter in the jump attack's state for the rest of the jump, with no
+         * whip, and Up held by the player catches a stair then: so does this) */
+        bool whip_out = false;
+        for (int s = 1; s < 16; s++) whip_out |= p->wram[OBJ_ACTIVE + s] && p->wram[OBJ_KIND + s] == 5;
+        if (vy > 0 && st != 0x04 && st != 0x05 && !(st == RICHTER_JUMP_ATTACK && whip_out)) pad |= PAD_UP;
     }
     return pad;
 }
