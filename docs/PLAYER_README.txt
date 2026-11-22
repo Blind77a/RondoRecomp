@@ -249,6 +249,8 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            Improvements: a page of graphics touch-ups (only the picture changes):
              Torch glow: Off (the default) or on: the wall torches (Stage 3's dungeon)
              light the bricks round them, their light flickering
+             Candle glow: Off (the default) or on: the blue-flamed candles get a
+             soft, flickering blue halo
            Smooth dithering: Off (the default) or on: the checkerboards and patterns of
            dots the game mixes two colours with (the red sky behind the burning town) are
            drawn as the smooth colour they stand for. Drawn texture (stone, wood, grass,
