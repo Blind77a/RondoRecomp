@@ -383,6 +383,8 @@ static int object_reach(int ext)
 }
 /* enemies sent in from just past the screen's edges start at most this far out (wide_frame) */
 #define EDGE_SPAWN_MAX 80
+/* frames after a room starts within which it may still open (wide_frame) */
+#define LATE_OPEN 8
 
 static uint8_t *at(Pce *p, const Patch *q) { return p->page[q->bank] ? p->page[q->bank] + q->off : NULL; }
 static const uint8_t *orig_of(const Patch *q) { return q->orig[0] ? q->orig : RTS_FILLER; }
@@ -1418,6 +1420,7 @@ static void on_entry(Pce *p, void *ctx)
     keep_reset();
     w->open_seen = false;
     w->lim_seen = w->calm = false;
+    w->room_age = 0;
     set_patches(p, WORLD_PATCHES, w->want > 0 && scrolls);
     set_patches(p, OBJECT_PATCHES, w->want > 0 && scrolls);
     update_vars(p);
@@ -1780,6 +1783,14 @@ void wide_frame(Wide *w, Pce *p)
         }
         if (all && moved) set_patches(p, OBJECT_PATCHES, true);
     }
+    /* A room that starts as one screen and opens a frame or two later (the boss room past
+     * area $1A's door: limits $200-$200 as it starts, $200-$280 after) was taken as one screen
+     * at its start (on_entry) and drawn 4:3 with Room sides: the changes are put in now, in
+     * its first frames, while it is still being put up */
+    if (w->room_age < 255) w->room_age++;
+    if (want && s == RONDO_PLAYING && w->room_age <= LATE_OPEN && room_scrolls(r) &&
+        (patches_in(p) & WORLD_PATCHES) != WORLD_PATCHES)
+        set_patches(p, WORLD_PATCHES | OBJECT_PATCHES, true);
     uint32_t in = patches_in(p);
     w->patched = (in & WORLD_PATCHES) == WORLD_PATCHES;
     bool objects_out = (in & OBJECT_PATCHES) == OBJECT_PATCHES;
