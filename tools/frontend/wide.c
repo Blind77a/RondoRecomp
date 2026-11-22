@@ -499,6 +499,67 @@ static int hit_find(const uint8_t *page, const uint8_t *bytes, int len, int hint
     return -1;
 }
 
+/* Stage objects that remove themselves past a distance of their own, inside the wider
+ * picture (found by their code's bytes in the stage's bank $81, like the hit test's). Stage 4's
+ * swinging spiked balls on chains (kinds $C4 chain, $C3 ball): each chain piece removes itself
+ * at screen X $160 or -$60, 96 px past the 4:3 screen, and the ball goes with it; with the
+ * picture reaching 128 px out (Level ends) and the ball swinging some 60 px from its anchor,
+ * it vanished in sight. Moved out to +-192 ($1C0 / -$C0) while the picture is wide. */
+static const struct { uint8_t len, at_r, at_l; uint8_t orig[21]; uint8_t wide_r, wide_l; } FAR_SITES[] = {
+    {21, 4, 15, {0xBD, 0xC8, 0x2B, 0xC9, 0x60, 0x90, 0x03, 0x4C, 0x54, 0x40, 0x60,
+                 0xBD, 0xC8, 0x2B, 0xC9, 0xA0, 0xB0, 0x03, 0x4C, 0x54, 0x40}, 0xC0, 0x40},
+};
+#define N_FAR (int)(sizeof FAR_SITES / sizeof FAR_SITES[0])
+static int far_at[N_FAR] = {-1};
+
+static void far_patches(Pce *p, bool on)
+{
+    uint8_t *page = p->page[0x81];
+    if (!page) return;
+    bool changed = false;
+    for (int k = 0; k < N_FAR; k++) {
+        uint8_t want[21];
+        memcpy(want, FAR_SITES[k].orig, FAR_SITES[k].len);
+        want[FAR_SITES[k].at_r] = FAR_SITES[k].wide_r;
+        want[FAR_SITES[k].at_l] = FAR_SITES[k].wide_l;
+        const uint8_t *from = on ? FAR_SITES[k].orig : want, *to = on ? want : FAR_SITES[k].orig;
+        int len = FAR_SITES[k].len;
+        int at_ = hit_find(page, to, len, far_at[k]);
+        if (at_ >= 0) { far_at[k] = at_; continue; }   /* already as wanted */
+        at_ = hit_find(page, from, len, far_at[k]);
+        if (at_ < 0) continue;
+        memcpy(page + at_, to, len);
+        far_at[k] = at_;
+        changed = true;
+    }
+    if (changed) p->cpu.page_gen[0x81]++;
+}
+
+/* The game removes objects more than 128 px past its screen (70:A06C: X < -$80, 70:A079:
+ * X >= $180). At a level's end the picture reaches that far (64 px a side, shifted 64 more:
+ * Level ends), so things there vanished in sight (Stage 4's block switch). While the picture
+ * is wide the line is moved 32 px further out, -$A0 / $1A0. (The bytes round each, checked.) */
+static const uint8_t REMOVE_CODE[] = {0xBD, 0x70, 0x2B, 0xF0, 0x16, 0x10, 0x0D, 0xBD, 0xC8, 0x2B, 0xC9, 0x80, 0xB0, 0x0D,
+                                      0x20, 0x54, 0x40, 0x4C, 0x15, 0xA1, 0xBD, 0xC8, 0x2B, 0xC9, 0x80, 0xB0, 0xF3};
+#define REMOVE_AT 0x0065            /* bank $70 offset (70:A065) */
+#define REMOVE_LEFT 11              /* ... its CMP's value: X's low byte below it (X < 0) */
+#define REMOVE_RIGHT 24             /* ... and above it (X >= $100) */
+
+static void remove_patch(Pce *p, bool on)
+{
+    uint8_t *m = p->page[0x70];
+    if (!m) return;
+    m += REMOVE_AT;
+    uint8_t l = on ? 0x60 : 0x80, r = on ? 0xA0 : 0x80;
+    for (int i = 0; i < (int)sizeof REMOVE_CODE; i++)
+        if (i != REMOVE_LEFT && i != REMOVE_RIGHT && m[i] != REMOVE_CODE[i]) return;   /* (not this code) */
+    if ((m[REMOVE_LEFT] != 0x80 && m[REMOVE_LEFT] != 0x60) || (m[REMOVE_RIGHT] != 0x80 && m[REMOVE_RIGHT] != 0xA0)) return;
+    if (m[REMOVE_LEFT] == l && m[REMOVE_RIGHT] == r) return;
+    m[REMOVE_LEFT] = l;
+    m[REMOVE_RIGHT] = r;
+    p->cpu.page_gen[0x70]++;
+}
+
 static void hit_patches(Pce *p, bool on)
 {
     uint8_t *page = p->page[0x6B];
@@ -1787,6 +1848,8 @@ void wide_frame(Wide *w, Pce *p)
     }
     /* the hit test's places, found in this stage's bank $6B (none found: hits as in 4:3) */
     hit_patches(p, show);
+    far_patches(p, show);
+    remove_patch(p, show);
     /* menus (title, file select): wide once the sides have filled for a few frames in a
      * row; then kept, with the last sides that filled, through a while they do not (a page
      * of the menu sliding over: its frames reach the edges), so it does not flick back */
@@ -2172,6 +2235,8 @@ void wide_frame(Wide *w, Pce *p)
 
 void wide_off(Wide *w, Pce *p)
 {
+    far_patches(p, false);
+    remove_patch(p, false);
     if (walk_lo >= 0) {   /* (an arena made walkable: its own limits back) */
         walk_patch(p, false);
         p->wram[LIMIT_RIGHT] = (uint8_t)(walk_cam0 >> 8);
