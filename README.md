@@ -49,6 +49,8 @@ What widescreen also takes care of:
 - Background objects (the figure on Stage 2's boss tower) stay where the game puts them.
 - GAME OVER: the frozen level and the continue screen are both 16:9.
 - Weapons hit enemies anywhere in the wider picture.
+- A room kept 4:3 beside an area hidden behind breakable blocks shows that area at its side,
+  the blocks carried across it, until they break and the picture goes wide (Stage 1).
 
 ### Pause menu
 

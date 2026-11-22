@@ -1758,13 +1758,20 @@ typedef struct { uint8_t row, col; uint16_t entry; } SideMark;
  * room is known by `mark`: map entries it has at those places, as rooms are numbered by the
  * way in: Stage 1's house is room 4 from a save state and room 1 walking in from the start.) */
 static const struct { uint8_t area, side, ledge, floor, dx, row; uint16_t pat_a, pat_b, attr; SideCopy copy[2], brick;
-                      uint16_t worn_a, worn_b; uint8_t worn_r0, worn_r1; SideMark mark[3]; } SIDE_RECIPES[] = {
+                      uint16_t worn_a, worn_b; uint8_t worn_r0, worn_r1; SideMark mark[3]; uint8_t map, blk_r0, blk_r1; } SIDE_RECIPES[] = {
     /* Stage 1's town, the house with the stairs: brick beside the pillar, with a drainpipe (and
      * the black gap at its top) and one of the room's tall barred windows on it, the ledge
      * along its foot, worn bricks low on it, the pillar's stone into the water below; the
      * room's own short pipe at its edge, above the pillar, bricked over */
     {0x10, VDC_SIDE_RIGHT, 22, 24, 0, 0, 0, 0, 0, {{5, 1, 0, 21, 0}, {8, 4, 4, 14, 2}}, {30, 2, 0, 7, 0},
-     0x8234, 0x8235, 12, 21, {{1, 5, 0x621F}, {4, 8, 0x8224}, {8, 30, 0x6124}}},
+     0x8234, 0x8235, 12, 21, {{1, 5, 0x621F}, {4, 8, 0x8224}, {8, 30, 0x6124}}, 0, 0, 0},
+    /* Stage 1, the stair room by the breakable stone blocks (area $10 room 5): the hidden room
+     * behind the blocks, already in the map left of the room (stone, dark brick, a pillar),
+     * shown as it is, but for the blocks' own rows (map rows 42-49), where the stone of the
+     * blocks at the room's edge carries on across the side: the room behind stays hidden until
+     * they break and the camera can go there (then the picture goes wide by itself) */
+    {0x10, VDC_SIDE_LEFT, 0, 0, 0, 0, 0, 0, 0, {{0}}, {0}, 0, 0, 0, 0,
+     {{38, 34, 0x629B}, {39, 35, 0x62A0}, {42, 34, 0x312A}}, 8, 42, 49},
 };
 static uint16_t room_patch[64 * VDC_FILL_W];
 static bool room_patched;
@@ -1842,9 +1849,35 @@ static int side_recipe(const uint8_t *wr, uint64_t wr_frame, const Vdc *d, int m
         bool same = true;
         for (int m = 0; m < 3 && same; m++) {
             const SideMark *mk = &SIDE_RECIPES[i].mark[m];
-            same = d->vram[ROW(mk->row) * mw + (mk->col & (mw - 1))] == mk->entry;
+            /* (a `map` recipe's marks are at map rows as they are: the camera can scroll) */
+            int mr = SIDE_RECIPES[i].map ? mk->row & (mh - 1) : ROW(mk->row);
+            same = d->vram[mr * mw + (mk->col & (mw - 1))] == mk->entry;
         }
         if (!same) continue;
+        if (SIDE_RECIPES[i].map) {
+            /* the map's own columns past the edge, `map` of them; past those, their outer
+             * columns carried on (each row's repeat, as carried_sides) */
+            bool right = SIDE_RECIPES[i].side == VDC_SIDE_RIGHT;
+            int n = SIDE_RECIPES[i].map, dir = right ? 1 : -1;
+            int e = right ? last + n : first - n;   /* (the outermost map column used) */
+            for (int r = 0; r < mh; r++) {
+                uint16_t *s = right ? &side_r[r * VDC_SIDE_TILES] : &side_l[r * VDC_SIDE_TILES];
+                int per = edge_repeat(d, mw, r, e, -dir);
+                if (!per) per = 2;
+                /* (`blk_r0`..`blk_r1`: the room's edge carried on, from the room's side) */
+                bool blk = SIDE_RECIPES[i].blk_r1 && r >= SIDE_RECIPES[i].blk_r0 && r <= SIDE_RECIPES[i].blk_r1;
+                int ed = right ? last : first, pb = 0;
+                if (blk && !(pb = edge_repeat(d, mw, r, ed, -dir))) pb = 2;
+                for (int k = 0; k < VDC_SIDE_TILES; k++) {
+                    int c = right ? last + 1 + k : first - 1 - k;
+                    if (blk) c = ed - dir * ((((c - ed) * -dir) % pb + pb) % pb);
+                    else if (k >= n) c = e - dir * ((((c - e) * -dir) % per + per) % per);
+                    s[k] = d->vram[r * mw + (c & (mw - 1))];
+                }
+            }
+            sides |= SIDE_RECIPES[i].side;
+            continue;
+        }
         uint16_t T[4];
         int pr, pc;
         if (!wall_texture(d, mw, mh, first, last, T, &pr, &pc)) continue;
