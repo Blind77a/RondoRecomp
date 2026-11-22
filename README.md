@@ -100,6 +100,8 @@ is out).
   glint of light runs round the rim of one of the heraldic shields on Stage 2's docks, picked
   at random (sometimes two); the shields' faces are left as they are.
 
+  ![Sail sway, Night sky and Shield shine on Stage 2's docks](https://github.com/user-attachments/assets/01108ab8-c202-4dca-bf8e-6d044abff975)
+
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
 - **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as
