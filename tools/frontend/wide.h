@@ -59,6 +59,7 @@ typedef struct Wide {
                             * after all (beyond_door) */
     int calm_cam;
     int inside_shift;      /* the shift while the camera was last within the room's limits */
+    int room_age;          /* frames since the room started (a room opening late: wide_frame) */
     int menu_good;         /* frames in a row a menu's sides could be filled (to MENU_FRAMES) */
     int menu_bad;          /* ... and since then could not */
     int menu_bxr, menu_moved;   /* a menu's sideways scroll last frame, frames it has not moved */
