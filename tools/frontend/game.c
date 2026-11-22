@@ -110,3 +110,4 @@ void game_apply_run(Pce *p, bool held, GameWatch *w)
     if (w->run_from == walk && mag == run_speed(walk) && ram[RONDO_PLAYER_ANIM_TIMER] > 1 && p->frame % 6)
         ram[RONDO_PLAYER_ANIM_TIMER]--;
 }
+

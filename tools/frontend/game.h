@@ -38,6 +38,7 @@ enum {
     RONDO_SAVE_MENU = 0x04,
     RONDO_PLAYING = 0x05,
     RONDO_AREA_CHANGE = 0x06,
+    RONDO_GAME_OVER = 0x07,    /* $31: 01-03 GAME OVER over the frozen level, then the continue screen */
     RONDO_CINEMATIC = 0x0A,
 };
 
