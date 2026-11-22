@@ -251,6 +251,8 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
              light the bricks round them, their light flickering
              Candle glow: Off (the default) or on: the blue-flamed candles get a
              soft, flickering blue halo
+             Alcove glow: Off (the default) or on: torches in the castle halls' lit
+             alcoves make the alcove's red bricks flicker with their light
            Smooth dithering: Off (the default) or on: the checkerboards and patterns of
            dots the game mixes two colours with (the red sky behind the burning town) are
            drawn as the smooth colour they stand for. Drawn texture (stone, wood, grass,
