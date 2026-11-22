@@ -1300,11 +1300,11 @@ int main(int argc, char **argv)
             }
         }
 
-        /* video (Video > Improvements > Torch glow, Candle glow, Alcove glow: torchglow.h, only the picture, kept in
+        /* video (Video > Improvements > Torch glow, Candle glow, Alcove glow, Moon glow, Shield shine: torchglow.h, only the picture, kept in
          * hardcore; worked out once a game frame) */
         {
             const uint32_t *fb = pce.vdc.fb;
-            if ((set.torch_glow || set.candle_glow || set.alcove_glow) && !test_mode) {
+            if ((set.torch_glow || set.candle_glow || set.alcove_glow || set.moon_glow || set.shield_shine) && !test_mode) {
                 static uint32_t tg[PCE_FB_MAX_W * PCE_FB_MAX_H];
                 static uint64_t tg_frame = UINT64_MAX;
                 static int tg_n;
@@ -1314,6 +1314,8 @@ int main(int argc, char **argv)
                         memcpy(&tg[y * PCE_FB_MAX_W], &pce.vdc.fb[y * PCE_FB_MAX_W], (size_t)pce.vdc.fb_w * sizeof *tg);
                     tg_n = 0;
                     /* (alcoves first: Torch glow changes the colours they are found by) */
+                    if (set.shield_shine) tg_n += shield_shine(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
+                    if (set.moon_glow) tg_n += moon_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                     if (set.alcove_glow) tg_n += alcove_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam, set.torch_glow);
                     if (set.torch_glow) tg_n += torch_glow(tg, tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);
                     if (set.candle_glow) tg_n += candle_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);

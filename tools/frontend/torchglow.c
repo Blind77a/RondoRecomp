@@ -1,6 +1,8 @@
 /* See torchglow.h. */
 #include "torchglow.h"
 
+#include "pce/pce.h"
+
 #include <math.h>
 #include <stdbool.h>
 #include <string.h>
@@ -126,6 +128,132 @@ int alcove_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int worl
                 float r = (float)(p >> 16 & 0xFF) * (1.0f + 2.2f * a) + 40.0f * a;
                 float g = (float)(p >> 8 & 0xFF) * (1.0f + 1.5f * a) + 18.0f * a;
                 img[y * pitch + x] = 0xFF000000u | (uint32_t)clampf(r) << 16 | (uint32_t)clampf(g) << 8 | (p & 0xFF);
+            }
+    }
+    return n;
+}
+
+/* Moon glow: the moon (Stage 2's docks, area $26: a disc about 30 px across in four pale
+ * blues, $91B6DA, $9191FF, $B6DAFF, $6D6DDA, that nothing else on its screens uses) gets a
+ * faint rim of light: the sky's blues (no red or green above $24, blue $24 or more) within
+ * 9 px of its edge lightened a little, breathing very slowly. The mast and posts in front stay
+ * as they are. Its middle and size are the moon pixels' bounds; a moon mostly behind something
+ * (fewer than 120 of its pixels) is left alone. */
+static bool moon_px(uint32_t p)
+{
+    return p == 0xFF91B6DAu || p == 0xFF9191FFu || p == 0xFFB6DAFFu || p == 0xFF6D6DDAu;
+}
+
+int moon_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame)
+{
+    int x0 = w, x1 = -1, y0 = h, y1 = -1, n = 0;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            if (moon_px(img[y * pitch + x])) {
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+                n++;
+            }
+    if (n < 120 || x1 - x0 > 48 || y1 - y0 > 48) return 0;
+    /* (its size from its width and its middle from its bottom: clouds cross its top, and a few
+     * of their pixels above it are in its colours, so its height is not its own; with the
+     * middle worked out from the height the ring sat inside its lower left, a dark gap left
+     * between them) */
+    float r0 = (float)(x1 - x0 + 1) * 0.5f;
+    float cx = (float)(x0 + x1) * 0.5f, cy = (float)y1 + 0.5f - r0;
+    float br = 0.95f + 0.05f * sinf((float)(frame % 160) * 6.2831853f / 160.0f);
+    float reach = 9.0f * br;
+    int lx = (int)(cx - r0 - reach) - 1, hx = (int)(cx + r0 + reach) + 1;
+    int ly = (int)(cy - r0 - reach) - 1, hy = (int)(cy + r0 + reach) + 1;
+    if (lx < 0) lx = 0;
+    if (ly < 0) ly = 0;
+    if (hx > w - 1) hx = w - 1;
+    if (hy > h - 1) hy = h - 1;
+    for (int y = ly; y <= hy; y++)
+        for (int x = lx; x <= hx; x++) {
+            uint32_t p = img[y * pitch + x];
+            int r = p >> 16 & 0xFF, g = p >> 8 & 0xFF, b = p & 0xFF;
+            if (r > 0x24 || g > 0x24 || b < 0x24) continue;   /* (the sky's blues only) */
+            float dx = (float)x - cx, dy = (float)y - cy, e = sqrtf(dx * dx + dy * dy) - r0;
+            if (e < -1.5f || e >= reach) continue;   /* (sky up to its very edge: no gap) */
+            if (e < 0.0f) e = 0.0f;
+            float a = (1.0f - e / reach) * (1.0f - e / reach) * 0.22f * br;
+            img[y * pitch + x] = 0xFF000000u | (uint32_t)clampf((float)r + 120.0f * a) << 16 |
+                                 (uint32_t)clampf((float)g + 150.0f * a) << 8 | (uint32_t)clampf((float)b + 190.0f * a);
+        }
+    return 1;
+}
+
+/* Shield shine: the wall of heraldic shields (Stage 2's docks, area $26): each shield's olive
+ * rim ($6D6D48, $484824) catches the light as a glint runs round it, every 48 frames. A shield
+ * is found by its rim's upper part: a connected run of those two colours some 20-26 px wide
+ * and 14-24 tall; the shield is that wide and 40 tall from its top. Only the rim's pixels
+ * change, the face and the stone round it are left as they are. */
+#define SHIELD_RIM_A 0xFF6D6D48u
+#define SHIELD_RIM_B 0xFF484824u
+#define MAX_SHIELDS 24
+static bool rim_px(uint32_t p) { return p == SHIELD_RIM_A || p == SHIELD_RIM_B; }
+
+int shield_shine(uint32_t *img, int w, int h, int pitch, uint64_t frame)
+{
+    static uint8_t seen[PCE_FB_MAX_W * PCE_FB_MAX_H];
+    static int stack[PCE_FB_MAX_W * PCE_FB_MAX_H];
+    if (w > PCE_FB_MAX_W || h > PCE_FB_MAX_H) return 0;
+    memset(seen, 0, (size_t)w * (size_t)h);
+    int bx0[MAX_SHIELDS], by0[MAX_SHIELDS], bx1[MAX_SHIELDS], n = 0;
+    for (int y = 0; y < h && n < MAX_SHIELDS; y++)
+        for (int x = 0; x < w && n < MAX_SHIELDS; x++) {
+            if (seen[y * w + x] || !rim_px(img[y * pitch + x])) continue;
+            int sp = 0, x0 = x, x1 = x, y0 = y, y1 = y, count = 0;
+            stack[sp++] = y * w + x;
+            seen[y * w + x] = 1;
+            while (sp) {
+                int q = stack[--sp], qx = q % w, qy = q / w;
+                count++;
+                if (qx < x0) x0 = qx;
+                if (qx > x1) x1 = qx;
+                if (qy < y0) y0 = qy;
+                if (qy > y1) y1 = qy;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int nx = qx + dx, ny = qy + dy;
+                        if (nx < 0 || ny < 0 || nx >= w || ny >= h || seen[ny * w + nx]) continue;
+                        if (!rim_px(img[ny * pitch + nx])) continue;
+                        seen[ny * w + nx] = 1;
+                        stack[sp++] = ny * w + nx;
+                    }
+            }
+            int bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+            if (bw >= 20 && bw <= 26 && bh >= 14 && bh <= 24 && count >= 30) {
+                bx0[n] = x0;
+                by0[n] = y0;
+                bx1[n] = x1;
+                n++;
+            }
+        }
+    float t = (float)(frame % 48) / 48.0f;
+    for (int s = 0; s < n; s++) {
+        float sw = (float)(bx1[s] - bx0[s] + 1), sh = 40.0f;
+        for (int y = by0[s]; y < by0[s] + 41 && y < h; y++)
+            for (int x = bx0[s] - 2; x <= bx1[s] + 2 && x < w; x++) {
+                if (x < 0) continue;
+                uint32_t p = img[y * pitch + x];
+                if (!rim_px(p)) continue;
+                float u = ((float)(x - bx0[s]) / sw) - 0.5f, v = ((float)(y - by0[s]) / sh) - 0.5f;
+                float ang = atan2f(v, u) / 6.2831853f;
+                if (ang < 0.0f) ang += 1.0f;
+                float d = fabsf(ang - t);
+                if (d > 0.5f) d = 1.0f - d;
+                float a = expf(-(d / 0.05f) * (d / 0.05f));
+                if (a < 0.01f) continue;
+                float r = (float)(p >> 16 & 0xFF), g = (float)(p >> 8 & 0xFF), b = (float)(p & 0xFF);
+                float k = 0.5f + (r + g + b) / 765.0f;
+                r += (255.0f - r) * a * k;
+                g += (245.0f - g) * a * k;
+                b += (220.0f - b) * a * k;
+                img[y * pitch + x] = 0xFF000000u | (uint32_t)clampf(r) << 16 | (uint32_t)clampf(g) << 8 | (uint32_t)clampf(b);
             }
     }
     return n;
