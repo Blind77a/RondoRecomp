@@ -34,6 +34,7 @@ typedef struct Settings {
     int effect_strength;   /* STRENGTH_* */
     int sides;             /* SIDES_*: what fills a wide screen beside the picture */
     bool smooth_fades;     /* the game's fades blended in 24-bit colour (video.h; off by default) */
+    bool alcove_glow;      /* torches in painted alcoves light the alcove's red bricks (torchglow.h; off by default) */
     bool candle_glow;      /* blue candles get a soft flickering halo (torchglow.h; off by default) */
     bool torch_glow;       /* wall torches light the wall round them, flickering (torchglow.h; off by default) */
     bool smooth_dither;    /* the game's dithering drawn as the colour it stands for (dedither.h; off by default) */

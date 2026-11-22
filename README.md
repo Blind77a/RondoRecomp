@@ -80,6 +80,9 @@ is out).
 
 - **Candle glow** (Video > Improvements, off by default): the blue-flamed candles get a soft,
   flickering blue halo round their flames; it goes out with the candle.
+- **Alcove glow** (Video > Improvements, off by default): wall torches in the castle halls'
+  painted alcoves, even half behind the wall, make the alcove's red bricks flicker with
+  their light; the stone round the alcove is left as it is.
 
   ![Candle glow in Stage 4](https://github.com/user-attachments/assets/4339bd86-b467-45d7-b541-5c8ada4ef261)
 

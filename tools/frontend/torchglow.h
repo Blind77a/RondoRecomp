@@ -17,3 +17,9 @@ int torch_glow(const uint32_t *src, uint32_t *dst, int w, int h, int pitch, uint
  * candle object, whipped for hearts) get a soft blue halo round their flame, flickering.
  * Worked on img in place (a copy of the picture); returns how many were lit. */
 int candle_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_x);
+
+/* Alcove glow (Video > Improvements > Alcove glow): wall torches in the castle halls' painted
+ * alcoves, whole or half behind the wall, light only the alcove's red bricks round them,
+ * flickering. In place; skip_full leaves torches with the whole flame showing (Torch glow's).
+ * Run before torch_glow (it finds flames by colours Torch glow changes). */
+int alcove_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_x, bool skip_full);

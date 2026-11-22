@@ -78,9 +78,63 @@ int candle_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int worl
     return n;
 }
 
+/* Alcove glow: the same wall torches where an alcove of lit red brick is painted round them
+ * (the castle's halls, area $04: dark arches whose bricks are the game's dark reds $240000
+ * and $480000; not $482400, which the floor stones use too), often half behind the next column of wall, only the flame's one column
+ * showing. Found by a flame pixel with the sconce's brown below one side of it; only those
+ * three reds round it are lit (brighter and warmer towards the flame, out to 60 px, the light
+ * flickering), so the light keeps to the painted alcove (not the stone round it, nor the
+ * HUD's brighter reds). skip_full: torches with their whole flame showing left to Torch glow. */
+static bool brick_red(uint32_t p) { return p == 0xFF240000u || p == 0xFF480000u; }
+
+int alcove_glow(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_x, bool skip_full)
+{
+    int fx[MAX_TORCHES], fy[MAX_TORCHES], n = 0;
+    for (int y = 0; y + 1 < h && n < MAX_TORCHES; y++)
+        for (int x = 1; x + 1 < w && n < MAX_TORCHES; x++) {
+            if (img[y * pitch + x] != FLAME || img[(y + 1) * pitch + x] != FLAME) continue;
+            if (img[(y + 1) * pitch + x - 1] != SCONCE && img[(y + 1) * pitch + x + 1] != SCONCE) continue;
+            bool dup = false;
+            for (int k = 0; k < n; k++) dup |= x - fx[k] < 4 && fx[k] - x < 4 && y - fy[k] < 4 && fy[k] - y < 4;
+            if (dup) continue;
+            bool full = x + 2 < w && img[y * pitch + x + 1] == FLAME && img[(y + 1) * pitch + x + 1] == FLAME &&
+                        img[(y + 1) * pitch + x - 1] == SCONCE && img[(y + 1) * pitch + x + 2] == SCONCE;
+            if (skip_full && full) {
+                x += 2;
+                continue;
+            }
+            fx[n] = x;
+            fy[n] = y;
+            n++;
+        }
+    for (int t = 0; t < n; t++) {
+        float cx = (float)fx[t] + 0.5f, cy = (float)fy[t] + 0.5f;
+        uint32_t seed = (uint32_t)((fx[t] + world_x) >> 3) * 131u + (uint32_t)(fy[t] >> 3) + 17u;
+        float f = 0.55f + 0.45f * noise(seed, frame);
+        int x0 = fx[t] - 61, x1 = fx[t] + 61, y0 = fy[t] - 61, y1 = fy[t] + 61;
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 > w - 1) x1 = w - 1;
+        if (y1 > h - 1) y1 = h - 1;
+        for (int y = y0; y <= y1; y++)
+            for (int x = x0; x <= x1; x++) {
+                uint32_t p = img[y * pitch + x];
+                if (!brick_red(p)) continue;
+                float dx = (float)x - cx, dy = ((float)y - cy) * 0.9f, d = sqrtf(dx * dx + dy * dy);
+                if (d >= 60.0f) continue;
+                float a = powf(1.0f - d / 60.0f, 1.2f) * f;
+                float r = (float)(p >> 16 & 0xFF) * (1.0f + 2.2f * a) + 40.0f * a;
+                float g = (float)(p >> 8 & 0xFF) * (1.0f + 1.5f * a) + 18.0f * a;
+                img[y * pitch + x] = 0xFF000000u | (uint32_t)clampf(r) << 16 | (uint32_t)clampf(g) << 8 | (p & 0xFF);
+            }
+    }
+    return n;
+}
+
 int torch_glow(const uint32_t *src, uint32_t *dst, int w, int h, int pitch, uint64_t frame, int world_x)
 {
-    for (int y = 0; y < h; y++) memcpy(&dst[y * pitch], &src[y * pitch], (size_t)w * sizeof *dst);
+    if (src != dst)
+        for (int y = 0; y < h; y++) memcpy(&dst[y * pitch], &src[y * pitch], (size_t)w * sizeof *dst);
     int tx[MAX_TORCHES], ty[MAX_TORCHES], n = 0;
     for (int y = 0; y + 1 < h && n < MAX_TORCHES; y++) {
         const uint32_t *r0 = &src[y * pitch], *r1 = &src[(y + 1) * pitch];
