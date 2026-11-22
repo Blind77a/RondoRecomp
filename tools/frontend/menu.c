@@ -85,11 +85,20 @@ static const Item VIDEO_ITEMS[] = {
     CHOICE("Screen effect", effect, EFFECTS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Effect strength", effect_strength, EFFECT_STRENGTHS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Beside the picture", sides, SIDES, 0, MENU_SETTINGS_CHANGED),
-    {IT_PAGE, "Improvements", PAGE_IMPROVE, 0, NULL, 0, 0, 0},
+    {IT_PAGE, "Graphic enhancements", PAGE_IMPROVE, 0, NULL, 0, 0, 0},
     {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
 };
-/* Video > Improvements: the game's graphics touched up (picture only) */
+/* Video > Graphic enhancements: the game's graphics touched up (picture only). "All effects" stands
+ * for every one of them (ALL_IMPROVE): On while all are on; changed, it turns them all on or
+ * off. */
+#define ALL_IMPROVE ((size_t)-1)
+static const size_t IMPROVE_FIELDS[] = {
+    offsetof(Settings, torch_glow), offsetof(Settings, candle_glow), offsetof(Settings, alcove_glow),
+    offsetof(Settings, moon_glow), offsetof(Settings, shield_shine), offsetof(Settings, sail_sway),
+    offsetof(Settings, night_sky),
+};
 static const Item IMPROVE_ITEMS[] = {
+    {IT_TOGGLE, "All effects", 0, ALL_IMPROVE, OFF_ON, 2, 0, MENU_SETTINGS_CHANGED},
     TOGGLE("Torch glow", torch_glow, MENU_SETTINGS_CHANGED),
     TOGGLE("Candle glow", candle_glow, MENU_SETTINGS_CHANGED),
     TOGGLE("Alcove glow", alcove_glow, MENU_SETTINGS_CHANGED),
@@ -175,7 +184,7 @@ static const struct { const char *title; const Item *items; int n; int parent; }
     {"Main Menu", START_ITEMS, (int)(sizeof START_ITEMS / sizeof START_ITEMS[0]), -1},
     {"Achievements", ACH_ITEMS, (int)(sizeof ACH_ITEMS / sizeof ACH_ITEMS[0]), PAGE_MAIN},
     {"Updates", UPDATE_ITEMS, (int)(sizeof UPDATE_ITEMS / sizeof UPDATE_ITEMS[0]), PAGE_MAIN},
-    {"Improvements", IMPROVE_ITEMS, (int)(sizeof IMPROVE_ITEMS / sizeof IMPROVE_ITEMS[0]), PAGE_VIDEO},
+    {"Graphic enhancements", IMPROVE_ITEMS, (int)(sizeof IMPROVE_ITEMS / sizeof IMPROVE_ITEMS[0]), PAGE_VIDEO},
 };
 
 /* What the selected item does: the footer's help line. */
@@ -195,12 +204,13 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Reset game", "Restart the game from power-on."},
     {"Start screen", "Leave the game for the start screen."},
     {"Fullscreen", "Use the whole screen at its own resolution (F11)."},
-    {"Improvements", "The game's graphics touched up. Only the picture changes: the game plays the same."},
+    {"Graphic enhancements", "The game's graphics touched up. Only the picture changes: the game plays the same."},
+    {"All effects", "Every graphic enhancement below at once: On turns them all on, Off all off."},
     {"Torch glow", "Wall torches light the bricks round them, their light flickering."},
     {"Candle glow", "Blue-flamed candles glow with a soft, flickering blue halo."},
     {"Moon glow", "A faint rim of light round the moon, in the sky round it only."},
     {"Night sky", "The stars over the docks twinkle faintly, and once in a while a small shooting star crosses the sky."},
-    {"Sail sway", "The purple sails over the docks move in the wind: the long ones sway, the short ones flutter."},
+    {"Sail sway", "Sails move in the wind: the docks' purple sails, and the ship's grey sails in a style picked at random each visit."},
     {"Shield shine", "Now and then (3 to 7 s apart) a glint of light runs round the rim of one of the wall's heraldic shields, now and then two."},
     {"Alcove glow", "Torches in the castle's lit alcoves make the alcove's red bricks flicker with their light."},
     {"VSync", "Show each frame when the screen refreshes: no tearing. Off: at once, maybe torn."},
@@ -245,6 +255,11 @@ static int parent_of(const Menu *m, int page)
 
 static int get_value(const Settings *s, const Item *it)
 {
+    if (it->field == ALL_IMPROVE) {
+        for (size_t i = 0; i < sizeof IMPROVE_FIELDS / sizeof IMPROVE_FIELDS[0]; i++)
+            if (!*(const bool *)((const char *)s + IMPROVE_FIELDS[i])) return 0;
+        return 1;
+    }
     const char *p = (const char *)s + it->field;
     if (it->kind == IT_TOGGLE) return *(const bool *)p ? 1 : 0;
     int v = *(const int *)p - it->base;
@@ -255,6 +270,11 @@ static void set_value(Settings *s, const Item *it, int v)
 {
     char *p = (char *)s + it->field;
     v = (v % it->n_choices + it->n_choices) % it->n_choices;
+    if (it->field == ALL_IMPROVE) {
+        for (size_t i = 0; i < sizeof IMPROVE_FIELDS / sizeof IMPROVE_FIELDS[0]; i++)
+            *(bool *)((char *)s + IMPROVE_FIELDS[i]) = v != 0;
+        return;
+    }
     if (it->kind == IT_TOGGLE) *(bool *)p = v != 0;
     else *(int *)p = v + it->base;
 }
@@ -897,6 +917,16 @@ int menu_check(Settings *s, SDL_Renderer *ren, char *err, int errlen)
         for (int i = 0; i < PAGES[pg].n; i++) {
             const Item *it = &PAGES[pg].items[i];
             if (it->kind != IT_CHOICE && it->kind != IT_TOGGLE) continue;
+            if (it->field == ALL_IMPROVE) {   /* (it changes several: each value read back) */
+                for (int v = 0; v < it->n_choices; v++) {
+                    set_value(s, it, v);
+                    if (get_value(s, it) != v) {
+                        if (!bad) snprintf(err, (size_t)errlen, "%s / %s, value %d", PAGES[pg].title, it->label, v);
+                        bad++;
+                    }
+                }
+                continue;
+            }
             size_t at = it->field, size = it->kind == IT_TOGGLE ? sizeof(bool) : sizeof(int);
             m.sel[pg] = i;
             for (int v = 0; v < it->n_choices; v++) {

@@ -1315,6 +1315,9 @@ int main(int argc, char **argv)
                     tg_n = 0;
                     /* (alcoves first: Torch glow changes the colours they are found by) */
                     if (set.sail_sway) tg_n += sail_sway(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);
+                    if (set.sail_sway && pce.wram[0xA2] == 0x32)   /* (Stage 5's ship: its grey sails) */
+                        tg_n += rigging_sway(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam,
+                                             pce.wram[0x1E8E] << 8 | pce.wram[0x1E20], vdc_sprite_pixels(), vdc_behind_pixels());
                     if (set.night_sky) tg_n += night_sky(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                     if (set.shield_shine) tg_n += shield_shine(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                     if (set.moon_glow) tg_n += moon_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);

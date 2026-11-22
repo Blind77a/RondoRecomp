@@ -596,3 +596,208 @@ int night_sky(uint32_t *img, int w, int h, int pitch, uint64_t frame)
     }
     return 1;
 }
+
+/* Sail sway on Stage 5's ship (area $32, Death): the grey sails furled and hanging under its yards move
+ * in the wind, in one of nine styles picked at random each time they come into view after a
+ * while away (entering the area, loading a state): 1 a barely-there lean, 2 a gentle sway with
+ * a livelier hem, 3 only the hem stirring, 4 still air with now and then a soft gust, 5 a slow
+ * ripple along the cloth, 7 waves running down it, 8 a sway with a fluttering hem, 9 gusty,
+ * 10 a storm (the numbers of the mock-ups they came from).
+ * A sail: a connected run of the background's greys (sprites left out: the mast and its
+ * metal bands, Richter, the HUD), less each stair step crossing it (a step: its top bar,
+ * $DADADA $919191 $B6B6B6 x4 $919191 $DADADA, or 5 px or more of $FFFFFF / $DADADA, and
+ * the 9 rows of stem under it), 120 px or more,
+ * hanging from a yard (brown above it).
+ * Each column of a sail hangs from its top: the further down, the more it moves. Each sail
+ * moves on its own: the phases come from where it is in the level (smoothly, so nothing jumps
+ * as the picture scrolls), the two swings have unrelated periods, and gusts reach each at its
+ * own moment. Where cloth moves off, what is behind it shows (vdc_behind_pixels: the mast
+ * where a sail hangs in front of it, else the night sky). */
+#define RIG_MAX 32
+#define RIG_SKY 0xFF000024u
+static const int RIG_STYLES[9] = {1, 2, 3, 4, 5, 7, 8, 9, 10};
+static int rig_force = -1;
+void rigging_sway_style(int style) { rig_force = style; }
+
+static bool rig_grey(uint32_t p)
+{
+    int r = p >> 16 & 0xFF, g = p >> 8 & 0xFF, b = p & 0xFF;
+    return r == g && g == b && r > 0;
+}
+
+static float rig_gust(float ph, float width)
+{
+    float d = ph - floorf(ph) - 0.5f;   /* (-0.5..0.5) */
+    return expf(-(d / width) * (d / width));
+}
+
+int rigging_sway(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_x, int world_y,
+                 const uint8_t *sprite, const uint32_t *behind)
+{
+    static uint8_t mask[PCE_FB_MAX_W * PCE_FB_MAX_H];
+    static int8_t comp[PCE_FB_MAX_W * PCE_FB_MAX_H];
+    static int stack[PCE_FB_MAX_W * PCE_FB_MAX_H];
+    static int16_t top[RIG_MAX][PCE_FB_MAX_W], bot[RIG_MAX][PCE_FB_MAX_W];
+    static uint32_t row[PCE_FB_MAX_W];
+    static uint64_t last_seen;
+    static bool seen_once;
+    static int style = 1;
+    if (w > PCE_FB_MAX_W || h > PCE_FB_MAX_H) return 0;
+    /* the greys of the background, less the stair steps */
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            mask[y * w + x] = !sprite[y * PCE_FB_MAX_W + x] && rig_grey(img[y * pitch + x]);
+    /* (a step's top as the ship draws it: $DADADA $919191 $B6B6B6 x4 $919191 $DADADA) */
+    static const uint32_t STEP_TOP[8] = {0xFFDADADAu, 0xFF919191u, 0xFFB6B6B6u, 0xFFB6B6B6u,
+                                         0xFFB6B6B6u, 0xFFB6B6B6u, 0xFF919191u, 0xFFDADADAu};
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x + 8 <= w; x++) {
+            if (img[y * pitch + x] != STEP_TOP[0] || memcmp(&img[y * pitch + x], STEP_TOP, sizeof STEP_TOP)) continue;
+            for (int yy = y - 1; yy <= y + 9 && yy < h; yy++)
+                for (int xx = x - 2; xx <= x + 9 && xx < w; xx++)
+                    if (yy >= 0 && xx >= 0) mask[yy * w + xx] = 0;
+        }
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w;) {
+            uint32_t p = img[y * pitch + x];
+            if (p != 0xFFFFFFFFu && p != 0xFFDADADAu) {
+                x++;
+                continue;
+            }
+            int e = x;
+            while (e < w && (img[y * pitch + e] == 0xFFFFFFFFu || img[y * pitch + e] == 0xFFDADADAu)) e++;
+            if (e - x >= 5)
+                for (int yy = y - 1; yy <= y + 9 && yy < h; yy++)
+                    for (int xx = x - 2; xx <= e + 1 && xx < w; xx++)
+                        if (yy >= 0 && xx >= 0) mask[yy * w + xx] = 0;
+            x = e;
+        }
+    /* the sails: connected runs of 120 px or more */
+    memset(comp, -1, (size_t)w * (size_t)h);
+    int n = 0, bx0[RIG_MAX], bx1[RIG_MAX], by0[RIG_MAX], by1[RIG_MAX];
+    for (int y = 0; y < h && n < RIG_MAX; y++)
+        for (int x = 0; x < w && n < RIG_MAX; x++) {
+            if (!mask[y * w + x] || comp[y * w + x] >= 0) continue;
+            int sp = 0, cnt = 0, x0 = x, x1 = x, y0 = y, y1 = y;
+            stack[sp++] = y * w + x;
+            comp[y * w + x] = (int8_t)n;
+            while (sp) {
+                int q = stack[--sp], qx = q % w, qy = q / w;
+                cnt++;
+                if (qx < x0) x0 = qx;
+                if (qx > x1) x1 = qx;
+                if (qy < y0) y0 = qy;
+                if (qy > y1) y1 = qy;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int nx = qx + dx, ny = qy + dy;
+                        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                        int k = ny * w + nx;
+                        if (!mask[k] || comp[k] >= 0) continue;
+                        comp[k] = (int8_t)n;
+                        stack[sp++] = k;
+                    }
+            }
+            if (cnt < 120) {   /* (too small: not a sail; its pixels left as they are) */
+                for (int yy = y0; yy <= y1; yy++)
+                    for (int xx = x0; xx <= x1; xx++)
+                        if (comp[yy * w + xx] == n) comp[yy * w + xx] = RIG_MAX;   /* (seen, none) */
+                continue;
+            }
+            bx0[n] = x0, bx1[n] = x1, by0[n] = y0, by1[n] = y1;
+            for (int xx = 0; xx < w; xx++) top[n][xx] = bot[n][xx] = -1;
+            for (int yy = y0; yy <= y1; yy++)
+                for (int xx = x0; xx <= x1; xx++)
+                    if (comp[yy * w + xx] == n) {
+                        if (top[n][xx] < 0) top[n][xx] = (int16_t)yy;
+                        bot[n][xx] = (int16_t)yy;
+                    }
+            /* a sail hangs from a yard: brown (the yard's wood) within 3 px above the top of a
+             * fifth of its columns or more, or its top cut off by the picture's (its yard above
+             * it); not the deck's railing, grey too, with nothing brown above */
+            int cols = 0, hung = 0;
+            for (int xx = x0; xx <= x1; xx++) {
+                if (top[n][xx] < 0) continue;
+                cols++;
+                for (int k = 1; k <= 3; k++) {
+                    int yy = top[n][xx] - k;
+                    if (yy < 0) break;
+                    uint32_t q = img[yy * pitch + xx];
+                    int qr = q >> 16 & 0xFF, qg = q >> 8 & 0xFF, qb = q & 0xFF;
+                    if (qr > qb + 0x20 && qr >= qg && qr > 0x40) {
+                        hung++;
+                        break;
+                    }
+                }
+            }
+            if (y0 > 0 && hung * 5 < cols) {
+                for (int yy = y0; yy <= y1; yy++)
+                    for (int xx = x0; xx <= x1; xx++)
+                        if (comp[yy * w + xx] == n) comp[yy * w + xx] = RIG_MAX;   /* (seen, none) */
+                continue;
+            }
+            n++;
+        }
+    if (n == 0) return 0;
+    /* a style for this visit */
+    if (rig_force >= 0) style = rig_force;
+    else if (!seen_once || frame - last_seen > 120)
+        style = RIG_STYLES[(int)(hash01((uint32_t)frame * 2654435761u ^ 0xA11Du) * 8.999f)];
+    seen_once = true;
+    last_seen = frame;
+    const float TAU = 6.2831853f, t = (float)frame;
+    for (int y = 0; y < h; y++) {
+        uint32_t *line = &img[y * pitch];
+        memcpy(row, line, (size_t)w * sizeof *row);
+        for (int x = 0; x < w; x++) {
+            /* the sail this pixel belongs to, or is next to (within 4 px of its columns) */
+            int c = comp[y * w + x];
+            if (c < 0 || c >= RIG_MAX) {
+                c = -1;
+                for (int s = 0; s < n && c < 0; s++)
+                    if (x >= bx0[s] - 4 && x <= bx1[s] + 4 && y >= by0[s] && y <= by1[s] + 1) c = s;
+                if (c < 0) continue;
+            }
+            int k = x;
+            if (top[c][k] < 0)
+                for (int dd = 1; dd <= 4; dd++) {
+                    if (x - dd >= 0 && top[c][x - dd] >= 0) { k = x - dd; break; }
+                    if (x + dd < w && top[c][x + dd] >= 0) { k = x + dd; break; }
+                }
+            if (top[c][k] < 0) continue;
+            float hgt = (float)(bot[c][k] - top[c][k]);
+            if (hgt < 1.0f) hgt = 1.0f;
+            float d = ((float)y - (float)top[c][k]) / hgt;
+            if (d <= 0.0f) continue;
+            if (d > 1.0f) d = 1.0f;
+            /* this spot's own phases and strength (smooth across the level) */
+            float wx = (float)(x + world_x), wy = (float)(y + world_y);
+            float p1 = 0.5f * sinf(wx / 150.0f + wy / 97.0f) + 0.5f * sinf(wy / 61.0f - wx / 233.0f);
+            float p2 = 0.5f * sinf(wx / 121.0f - wy / 83.0f + 1.3f) + 0.5f * sinf(wx / 197.0f + 2.1f);
+            float p3 = 0.5f * sinf(wy / 71.0f + wx / 173.0f + 0.7f) + 0.5f;
+            float g0 = 0.5f * sinf(wx / 109.0f + wy / 139.0f + 2.9f) + 0.5f;
+            float wgt = 0.6f + 0.4f * (0.5f + 0.5f * sinf(wx / 89.0f + wy / 113.0f));
+            float sway = sinf(TAU * (t / 380.0f + p1)) + 0.35f * sinf(TAU * (t / 167.0f + p2));
+            float d14 = powf(d, 1.4f), d15 = powf(d, 1.5f), d3 = d * d * d, dx;
+            switch (style) {
+            case 1: dx = 1.0f * wgt * sway * d15; break;
+            case 2: dx = 1.4f * wgt * sway * d14 + 0.4f * sinf(TAU * (t / 144.0f + p3) + wx / 7.0f) * d3; break;
+            case 3: dx = 1.3f * wgt * sinf(TAU * (t / 167.0f + p3) + wx / 9.0f) * d3; break;
+            case 4: dx = (0.4f * sway + 1.8f * rig_gust(t / 430.0f + g0, 0.09f) * sinf(TAU * (t / 108.0f + p2))) * wgt * d15; break;
+            case 5: dx = 1.2f * wgt * sinf(TAU * (t / 380.0f + p1) - wx / 18.0f) * d14; break;
+            case 7: dx = 2.0f * wgt * sinf(TAU * (t / 216.0f + p1) - d * 3.0f) * powf(d, 1.2f); break;
+            case 8: dx = 2.0f * wgt * sway * d14 + 1.0f * sinf(TAU * (t / 72.0f + p3) + wx / 5.0f) * d3; break;
+            case 9: {
+                float g = fmaxf(rig_gust(t / 430.0f + g0, 0.12f), rig_gust(t / 430.0f + g0 + 0.5f, 0.08f));
+                dx = (0.6f * sway + 3.2f * g * sinf(TAU * (t / 86.0f + p2) - d * 2.0f)) * wgt * powf(d, 1.3f);
+                break;
+            }
+            default: dx = (3.0f * sway + 1.5f * sinf(TAU * (t / 54.0f + p3) + wx / 4.0f - d * 3.0f)) * wgt * powf(d, 1.2f); break;
+            }
+            int sx = x - (int)lroundf(dx);
+            if (sx >= 0 && sx < w && comp[y * w + sx] == c) line[x] = row[sx];
+            else if (comp[y * w + x] == c) line[x] = behind ? behind[y * PCE_FB_MAX_W + x] : RIG_SKY;
+        }
+    }
+    return n;
+}

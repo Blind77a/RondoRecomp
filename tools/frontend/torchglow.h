@@ -35,6 +35,15 @@ int sail_sway(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_
  * faintly, and rarely (about once a minute of starry sky, at least 20 s apart) a small, dim
  * shooting star crosses it. In place; run after sail_sway and before moon_glow. 1 if the
  * starry sky was found. night_sky_streak_at: a shooting star from that frame on (tests). */
+/* Sail sway on Stage 5's ship (area $32: only call it there): its grey sails move in the
+ * wind, in a style picked at random each time they come into view (rigging_sway_style forces
+ * one: 1-5, 7-10, for tests; -1 random). sprite: vdc_sprite_pixels (sprites are left out);
+ * behind: vdc_behind_pixels (shown where cloth moves off).
+ * In place; returns how many sails moved. */
+int rigging_sway(uint32_t *img, int w, int h, int pitch, uint64_t frame, int world_x, int world_y,
+                 const uint8_t *sprite, const uint32_t *behind);
+void rigging_sway_style(int style);
+
 int night_sky(uint32_t *img, int w, int h, int pitch, uint64_t frame);
 void night_sky_streak_at(int frame);
 

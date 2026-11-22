@@ -293,6 +293,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--moon-glow")) moon_shots = true;   /* ... and Moon glow */
         else if (!strcmp(argv[i], "--shield-shine")) shield_shots = true;   /* ... and Shield shine */
         else if (!strcmp(argv[i], "--sail-sway")) sail_shots = true;   /* ... and Sail sway */
+        else if (!strcmp(argv[i], "--sail-style") && i + 1 < argc) rigging_sway_style(atoi(argv[++i]));   /* the ship's sails: that style */
         else if (!strcmp(argv[i], "--night-sky")) night_shots = true;   /* ... and Night sky */
         else if (!strcmp(argv[i], "--night-sky-streak") && i + 1 < argc) night_sky_streak_at(atoi(argv[++i]));   /* a shooting star from that frame */
         else if (!strcmp(argv[i], "--dump-sat") && i + 1 < argc && n_sat < 8) sat_at[n_sat++] = atol(argv[++i]);
@@ -511,6 +512,9 @@ int main(int argc, char **argv)
                     for (int y = 0; y < pce.vdc.fb_h; y++)
                         memcpy(&tg[y * PCE_FB_MAX_W], &shot[y * PCE_FB_MAX_W], (size_t)pce.vdc.fb_w * sizeof *tg);
                 if (sail_shots) sail_sway(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, (pce.wram[0x1E96] & 0x0F) << 8 | pce.wram[0x1E08]);
+                if (sail_shots && pce.wram[0xA2] == 0x32)
+                    rigging_sway(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, (pce.wram[0x1E96] & 0x0F) << 8 | pce.wram[0x1E08],
+                                 pce.wram[0x1E8E] << 8 | pce.wram[0x1E20], vdc_sprite_pixels(), vdc_behind_pixels());
                 if (night_shots) night_sky(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                 if (shield_shots) shield_shine(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
                 if (moon_shots) moon_glow(tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame);
