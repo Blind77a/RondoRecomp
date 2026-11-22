@@ -75,6 +75,9 @@ is out).
 - **Torch glow** (Video > Improvements, off by default): the wall torches light the bricks
   round them, their light flickering, each torch on its own rhythm (Stage 3's dungeon so
   far: the torches are found by their exact flame and sconce colours).
+
+  ![Torch glow in Stage 3's dungeon](https://github.com/user-attachments/assets/a3401218-e880-45bb-a0c3-947fdf20b589)
+
 - **Smooth fades** (off by default): the game's fades are blended in 24-bit colour instead of
   stepping through its 8 levels a channel.
 - **Smooth dithering** (off by default): the game's regular checkerboard dithering, such as
