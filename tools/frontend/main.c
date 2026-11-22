@@ -38,6 +38,7 @@
 #include "video.h"
 #include "fit.h"
 #include "moves.h"
+#include "torchglow.h"
 #include "prompt.h"
 #include "programs.h"
 #include "update.h"
@@ -1299,8 +1300,23 @@ int main(int argc, char **argv)
             }
         }
 
-        /* video */
-        video_upload(&video, pce.vdc.fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
+        /* video (Video > Improvements > Torch glow: torchglow.h, only the picture, kept in
+         * hardcore; worked out once a game frame) */
+        {
+            const uint32_t *fb = pce.vdc.fb;
+            if (set.torch_glow && !test_mode) {
+                static uint32_t tg[PCE_FB_MAX_W * PCE_FB_MAX_H];
+                static uint64_t tg_frame = UINT64_MAX;
+                static int tg_n;
+                if (ran_frame || tg_frame != (uint64_t)pce.frame) {
+                    int cam = (pce.wram[0x1E96] & 0x0F) << 8 | pce.wram[0x1E08];
+                    tg_n = torch_glow(pce.vdc.fb, tg, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W, pce.frame, cam);
+                    tg_frame = (uint64_t)pce.frame;
+                }
+                if (tg_n) fb = tg;
+            }
+            video_upload(&video, fb, pce.vdc.fb_w, pce.vdc.fb_h, PCE_FB_MAX_W);
+        }
         if (features_dir && !t_shots && pce.frame >= 17880) {
             /* screenshots: 16:9 window with each picture mode and screen effect, then the menu
              * pages */

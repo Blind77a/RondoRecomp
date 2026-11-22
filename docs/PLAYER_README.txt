@@ -214,6 +214,9 @@ Video      Fullscreen (uses the screen's own resolution, e.g. 4K)
            soft TV picture); Effect strength: Light, Medium or Strong
            Beside the picture: when the picture is narrower than the screen, a blurred
            copy of it, or black
+           Improvements: a page of graphics touch-ups (only the picture changes):
+             Torch glow: Off (the default) or on: the wall torches (Stage 3's dungeon)
+             light the bricks round them, their light flickering
 Gameplay   Skip cinematics: Press START, Automatically, or Never. During the logo and
            the intro (the story narration and opening before the title screen), START, A
            or X goes straight to the title screen, the way the game itself allows once it

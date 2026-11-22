@@ -10,7 +10,7 @@
 #include "theme.h"
 #include "video.h"
 
-enum { PAGE_MAIN, PAGE_VIDEO, PAGE_GAMEPLAY, PAGE_CHEATS, PAGE_CONTROLS, PAGE_START, PAGE_ACH, PAGE_UPDATE, PAGE_COUNT };
+enum { PAGE_MAIN, PAGE_VIDEO, PAGE_GAMEPLAY, PAGE_CHEATS, PAGE_CONTROLS, PAGE_START, PAGE_ACH, PAGE_UPDATE, PAGE_IMPROVE, PAGE_COUNT };
 
 /* IT_EDIT: a text field (arg 0: the Settings string at field, n_choices its size; arg 1: the
  * password, kept in the Menu); IT_INFO: a status line, Menu.ach[arg] (0-1), Menu.upd[arg - 2] */
@@ -85,6 +85,12 @@ static const Item VIDEO_ITEMS[] = {
     CHOICE("Screen effect", effect, EFFECTS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Effect strength", effect_strength, EFFECT_STRENGTHS, 0, MENU_SETTINGS_CHANGED),
     CHOICE("Beside the picture", sides, SIDES, 0, MENU_SETTINGS_CHANGED),
+    {IT_PAGE, "Improvements", PAGE_IMPROVE, 0, NULL, 0, 0, 0},
+    {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
+};
+/* Video > Improvements: the game's graphics touched up (picture only) */
+static const Item IMPROVE_ITEMS[] = {
+    TOGGLE("Torch glow", torch_glow, MENU_SETTINGS_CHANGED),
     {IT_BACK, "Back", 0, 0, NULL, 0, 0, 0},
 };
 static const Item GAMEPLAY_ITEMS[] = {
@@ -163,6 +169,7 @@ static const struct { const char *title; const Item *items; int n; int parent; }
     {"Main Menu", START_ITEMS, (int)(sizeof START_ITEMS / sizeof START_ITEMS[0]), -1},
     {"Achievements", ACH_ITEMS, (int)(sizeof ACH_ITEMS / sizeof ACH_ITEMS[0]), PAGE_MAIN},
     {"Updates", UPDATE_ITEMS, (int)(sizeof UPDATE_ITEMS / sizeof UPDATE_ITEMS[0]), PAGE_MAIN},
+    {"Improvements", IMPROVE_ITEMS, (int)(sizeof IMPROVE_ITEMS / sizeof IMPROVE_ITEMS[0]), PAGE_VIDEO},
 };
 
 /* What the selected item does: the footer's help line. */
@@ -182,6 +189,8 @@ static const struct { const char *label, *help; } HELP[] = {
     {"Reset game", "Restart the game from power-on."},
     {"Start screen", "Leave the game for the start screen."},
     {"Fullscreen", "Use the whole screen at its own resolution (F11)."},
+    {"Improvements", "The game's graphics touched up. Only the picture changes: the game plays the same."},
+    {"Torch glow", "Wall torches light the bricks round them, their light flickering."},
     {"VSync", "Show each frame when the screen refreshes: no tearing. Off: at once, maybe torn."},
     {"Aspect ratio", "4:3 as on a TV, square pixels, or stretched to fill."},
     {"Size", "As big as the screen allows, or whole multiples only."},
