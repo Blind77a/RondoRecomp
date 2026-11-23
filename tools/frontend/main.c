@@ -229,6 +229,7 @@ static void run_frame_as(bool live)
     pce_run_frame(&pce);
     prompt_after_frame(&prompt, &pce);
     moves_after_frame(&moves, &pce, &move_opts, live);
+    secret_after_frame(&pce);
 }
 
 static void run_frame(void) { run_frame_as(true); }
@@ -662,6 +663,7 @@ int main(int argc, char **argv)
     Settings set;
     settings_load(&set, settings_path);
     load_title_art(pref_dir);
+    secret_set_title_arts(arts, n_arts);
     if (showcase) {   /* the options it changes are kept next to the script, not in the profile */
         snprintf(settings_path, sizeof settings_path, "%s.settings.ini", showcase);
         char serr[300];

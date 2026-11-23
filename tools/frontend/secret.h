@@ -23,9 +23,14 @@
 #include <stdbool.h>
 
 #include "pce/pce.h"
+#include "titleart.h"
 
 /* before a frame runs, with p->pad as the game will read it */
 void secret_frame(Pce *p, bool on);
+/* the title art loaded (the arena's sky takes the title's sides from it) */
+void secret_set_title_arts(const TitleArt *arts, int n);
+/* after a frame: what the host draws over the picture (the hidden room's scene) */
+void secret_after_frame(Pce *p);
 /* forget the host-side state (after a state load, a rewind, a restart); the stage's RAM is
  * looked at again next frame */
 void secret_reset(void);

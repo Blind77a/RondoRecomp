@@ -329,16 +329,22 @@ static struct {
     bool low, on;
     int signal, index, prev, cur;
     double phase, hz;
+    int volume, soften;
+    float lp;
 } xv;
 
-void sound_extra_play(const uint8_t *data, uint32_t len, uint8_t rate)
+void sound_extra_play_at(const uint8_t *data, uint32_t len, uint8_t rate, int volume, int soften)
 {
     memset(&xv, 0, sizeof xv);
     xv.data = data;
     xv.len = len;
     xv.hz = 32000.0 / (16 - (rate & 15));
+    xv.volume = volume;
+    xv.soften = soften;
     xv.on = data && len;
 }
+
+void sound_extra_play(const uint8_t *data, uint32_t len, uint8_t rate) { sound_extra_play_at(data, len, rate, 256, 0); }
 
 void sound_extra_stop(void) { xv.on = false; }
 
@@ -370,7 +376,9 @@ static int extra_sample(void)
         xv.prev = xv.cur;
         xv.cur = xv.signal;
     }
-    return (int)(xv.prev + (xv.cur - xv.prev) * xv.phase);
+    float v = (float)(xv.prev + (xv.cur - xv.prev) * xv.phase);
+    xv.lp += (v - xv.lp) * (float)(256 - xv.soften) / 256.0f;
+    return (int)(xv.lp * (float)xv.volume / 256.0f);
 }
 
 /* ---- output ---------------------------------------------------------------------- */

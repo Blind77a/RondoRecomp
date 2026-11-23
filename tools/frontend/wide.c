@@ -856,6 +856,8 @@ static const struct { uint8_t area, room; uint16_t cam; uint8_t quiet[4]; } AREN
      * left of the arena, with its launchers $36) sends its bats ($34) in at the game's
      * screen edge once the camera has gone left. */
     {0x14, 0x00, 0x0300, {0x34, 0x35, 0x36}},
+    /* an arena of the host's own (secret.c), its camera held at page 3 while it is fought */
+    {0x10, 0x01, 0x0300, {0}},
 };
 
 static bool open_arena(const uint8_t *r)
@@ -2259,6 +2261,22 @@ static bool scenery_fill(Pce *p, int cam)
     return any;
 }
 
+/* A frame wide_frame leaves alone (below): only the picture's shift (the host's own) set
+ * for the camera the game built its sprites with, as the HUD was placed for (hud_at_build).
+ * Left as it was, the HUD (placed for the new camera) stood a camera step off for that
+ * frame: in a walkable arena it twitched by a pixel or two as Richter jumped. */
+static void shift_only(Wide *w, Pce *p)
+{
+    const uint8_t *r = p->wram;
+    int ext = w->want;
+    if (!ext || !w->active || !w->build_seen || game_state(p) != RONDO_PLAYING || !room_scrolls(r)) return;
+    int left, right;
+    room_walls(r, w->build_cam, &left, &right);
+    int shift = picture_shift(w, r, w->build_cam, left, right, ext, false);
+    vdc_set_wide_shift(shift);
+    w->shift = shift;
+}
+
 void wide_frame(Wide *w, Pce *p)
 {
     /* A frame can end with the CPU still in code of ours (a slow frame: the sprite builder,
@@ -2266,11 +2284,17 @@ void wide_frame(Wide *w, Pce *p)
      * Taking the changes out then (as a stage ends: leaving play) put the RTS filler back
      * under it and the game ran off into the I/O page (after area $1A's orb). Nothing is
      * changed until it is out of our code; the picture stays as it was for that frame. */
-    if (p->cpu.mpr[7] == 0x00 && p->cpu.pc >= 0xFA00) return;
+    if (p->cpu.mpr[7] == 0x00 && p->cpu.pc >= 0xFA00) {
+        shift_only(w, p);
+        return;
+    }
     /* ... nor while the game is inside a column drawing called from our code at $FE1C (its
      * return to $FE1F on the stack: the frame can end before it comes back) */
     for (int sp = p->cpu.s + 1; sp < 0xFF; sp++)
-        if (p->wram[0x100 + sp] == 0x1E && p->wram[0x100 + sp + 1] == 0xFE) return;
+        if (p->wram[0x100 + sp] == 0x1E && p->wram[0x100 + sp + 1] == 0xFE) {
+            shift_only(w, p);
+            return;
+        }
     /* Demos (state $03: the title's attract mode and the save menu's Tactics runs) are shown
      * 4:3, widescreen off while they play; it comes back by itself after (they played wide
      * as levels do, and went wrong: their rooms start in this state, which is not play) */

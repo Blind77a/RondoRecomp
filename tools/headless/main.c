@@ -219,12 +219,15 @@ int main(int argc, char **argv)
     long vram_dump_at[32];             /* --dump-vram FRAME:FILE: all of VRAM after that frame (up to 32) */
     int n_vram_dump = 0;
     long adpcm_dump_at = -1;           /* --dump-adpcm FRAME:FILE: the 64 KiB of ADPCM RAM */
+    long vce_dump_at = -1;             /* --dump-vce FRAME:FILE: the 512 palette entries (16-bit LE) */
+    char vce_dump_path[256] = "";
     char adpcm_dump_path[256] = "";
     static char vram_dump_path[32][256];
     long run_at[16][2]; /* --run FRAME:LEN: hold the run button */
     int n_run = 0;
     long rows_from = -1, rows_to = -1;   /* --row-scroll A:B: each frame's bands of rows by X scroll */
     long sat_at[8]; /* --dump-sat FRAME: print the sprite table after that frame */
+    FILE *sat_log = NULL;   /* --sat-log FILE: after every frame its number (u32), the sprite table (256 u16) and the palettes (512 u16) */
     int wide = 0;   /* --wide N: widescreen extension in pixels per side (42 = 16:9 at 4:3, 70 square) */
     bool wide_edges = false;   /* --wide-edges: Video > Level ends */
     bool wide_menus = false;   /* --wide-menus: Video > Wide menus */
@@ -315,6 +318,7 @@ int main(int argc, char **argv)
             if (sscanf(argv[++i], "%ld:%255s", &vram_dump_at[n_vram_dump], vram_dump_path[n_vram_dump]) == 2) n_vram_dump++;
         }
         else if (!strcmp(argv[i], "--dump-adpcm") && i + 1 < argc) sscanf(argv[++i], "%ld:%255s", &adpcm_dump_at, adpcm_dump_path);
+        else if (!strcmp(argv[i], "--dump-vce") && i + 1 < argc) sscanf(argv[++i], "%ld:%255s", &vce_dump_at, vce_dump_path);
         else if (!strcmp(argv[i], "--run") && i + 1 < argc && n_run < 16) {
             if (sscanf(argv[++i], "%ld:%ld", &run_at[n_run][0], &run_at[n_run][1]) == 2) n_run++;
         }
@@ -335,6 +339,7 @@ int main(int argc, char **argv)
                 fclose(tf);
             }
             if (!title_art.loaded) fprintf(stderr, "cannot read %s (396 x 228 ARGB, raw)\n", argv[i]);
+            else secret_set_title_arts(&title_art, 1);
         }
         else if (!strcmp(argv[i], "--smooth-fades")) vce_set_smooth_fades(true);
         else if (!strcmp(argv[i], "--dedither")) dedither_shots = true;
@@ -356,6 +361,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--wide-report") && i + 1 < argc && n_wrep < 8) wrep_at[n_wrep++] = atol(argv[++i]);
         else if (!strcmp(argv[i], "--row-scroll") && i + 1 < argc) sscanf(argv[++i], "%ld:%ld", &rows_from, &rows_to);
         else if (!strcmp(argv[i], "--dump-sat") && i + 1 < argc && n_sat < 8) sat_at[n_sat++] = atol(argv[++i]);
+        else if (!strcmp(argv[i], "--sat-log") && i + 1 < argc) sat_log = fopen(argv[++i], "wb");
         else if (!strcmp(argv[i], "--vram-watch") && i + 1 < argc) {
             if (sscanf(argv[++i], "%x:%x", &vw_lo, &vw_hi) == 2) vw_count = calloc(1u << 24, sizeof *vw_count);
         }
@@ -517,6 +523,7 @@ int main(int argc, char **argv)
                        pce.wram[0x31], pce.vdc.fb_wide, wd.patched ? "every game change in" : "not every game change in", buf);
             }
         moves_after_frame(&moves, &pce, &move_opts, true);
+        if (secret_on) secret_after_frame(&pce);
         game_apply_cheats(&pce, &cheats, &gw);
         {
             bool run = false;
@@ -551,6 +558,12 @@ int main(int argc, char **argv)
                 y = e + 1;
             }
             printf("\n");
+        }
+        if (sat_log) {
+            uint32_t fn = (uint32_t)(f + 1);
+            fwrite(&fn, 4, 1, sat_log);
+            fwrite(pce.vdc.satb, 2, 256, sat_log);
+            fwrite(pce.vce.pal, 2, 512, sat_log);
         }
         for (int i = 0; i < n_sat; i++)
             if (sat_at[i] == f + 1) {
@@ -600,6 +613,10 @@ int main(int argc, char **argv)
                 fwrite(ent, sizeof ent, 1, lf);
                 fclose(lf);
             }
+        }
+        if (vce_dump_at == f + 1) {
+            FILE *vf = fopen(vce_dump_path, "wb");
+            if (vf) { fwrite(pce.vce.pal, 2, 512, vf); fclose(vf); }
         }
         if (adpcm_dump_at == f + 1) {
             FILE *af = fopen(adpcm_dump_path, "wb");
