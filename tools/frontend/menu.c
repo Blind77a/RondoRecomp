@@ -11,6 +11,10 @@
 #include "video.h"
 
 enum { PAGE_MAIN, PAGE_VIDEO, PAGE_GAMEPLAY, PAGE_CHEATS, PAGE_CONTROLS, PAGE_START, PAGE_ACH, PAGE_UPDATE, PAGE_WIDE, PAGE_IMPROVE, PAGE_COUNT };
+/* (a page's selected row is kept in Menu.sel: with more pages than it held, the Widescreen and
+ * Graphic enhancements pages wrote theirs over the status line, and their help lines showed
+ * as a lone "?") */
+_Static_assert(PAGE_COUNT <= (int)(sizeof ((Menu *)0)->sel / sizeof ((Menu *)0)->sel[0]), "Menu.sel holds every page");
 
 /* IT_EDIT: a text field (arg 0: the Settings string at field, n_choices its size; arg 1: the
  * password, kept in the Menu); IT_INFO: a status line, Menu.ach[arg] (0-1), Menu.upd[arg - 2] */
