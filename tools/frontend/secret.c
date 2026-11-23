@@ -127,8 +127,11 @@ static struct {
 
 static void fight_reset(void);
 
+static bool hidden_seen;   /* (see in_hidden) */
+
 void secret_reset(void)
 {
+    hidden_seen = false;
     s.prev = 0;
     s.code = 0;
     s.open = false;
@@ -171,10 +174,15 @@ static bool data_ok(Pce *p)
 static int cam_page(Pce *p) { return p->wram[W_CAM_PAGE] & 0x0F; }
 static bool playing(Pce *p) { return game_state(p) == RONDO_PLAYING && p->wram[RONDO_SUB] == 1; }
 static bool in_house(Pce *p) { return p->wram[W_AREA] == AREA && p->wram[W_ROOM] == HOUSE && cam_page(p) == 0; }
+/* (walking in from the street, the room is the house's two frames before the camera leaves the
+ * street's page 3, so the hidden room counts only once the game has played in it; then it holds
+ * through pauses and the like: hidden_seen) */
 static bool in_hidden(Pce *p)
 {
     int c = cam_page(p);
-    return p->wram[W_AREA] == AREA && p->wram[W_ROOM] == HOUSE && (c == 2 || c == 3);
+    if (p->wram[W_AREA] != AREA || p->wram[W_ROOM] != HOUSE || (c != 2 && c != 3)) return hidden_seen = false;
+    if (playing(p)) hidden_seen = true;
+    return hidden_seen;
 }
 static int px(Pce *p) { return p->wram[W_PX_HI] << 8 | p->wram[W_PX]; }
 static int py(Pce *p) { return p->wram[W_PY_HI] << 8 | p->wram[W_PY]; }

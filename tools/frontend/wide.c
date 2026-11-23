@@ -851,13 +851,20 @@ static void room_walls(const uint8_t *r, int cam, int *left, int *right)
 #define ROOM 0x83
 /* quiet: kinds of object removed while the arena is walkable (arena_walk), things of the
  * level beside it that the 4:3 fight never brings in because its camera never moves */
-static const struct { uint8_t area, room; uint16_t cam; uint8_t quiet[4]; } ARENAS[] = {
+/* left: opened to the left only, by twice the side (the level's floor ends at the arena's
+ * right edge); flat: no parallax while walkable (flat_layers) */
+static const struct { uint8_t area, room; uint16_t cam; uint8_t quiet[4]; bool left, flat; } ARENAS[] = {
     /* Stage 3: the giant three-eyed skull, before the bridge. A bat generator ($35, 250 px
      * left of the arena, with its launchers $36) sends its bats ($34) in at the game's
      * screen edge once the camera has gone left. */
-    {0x14, 0x00, 0x0300, {0x34, 0x35, 0x36}},
+    {0x14, 0x00, 0x0300, {0x34, 0x35, 0x36}, false, false},
+    /* Stage 1: the wyvern, at the castle gate. Its floor ends at the 4:3 picture's right edge
+     * (opened both ways, Richter walked off it and fell, at X 777), and walking in, Level
+     * ends already shows the level up to there: opened to the left only, the picture stays
+     * as it stood as the camera locks (opened both ways, it jumped 71 px). */
+    {0x0E, 0x00, 0x0200, {0}, true, true},
     /* an arena of the host's own (secret.c), its camera held at page 3 while it is fought */
-    {0x10, 0x01, 0x0300, {0}},
+    {0x10, 0x01, 0x0300, {0}, false, false},
 };
 
 static bool open_arena(const uint8_t *r)
@@ -1000,6 +1007,65 @@ static bool walk_patch(Pce *p, bool on)
 }
 
 static int walk_cam0;   /* the arena's own camera X (its limits as the game has them) */
+static bool walk_flat;  /* its parallax turned off (ARENAS flat) */
+/* In a walkable arena the scenery layers (1-3: the camera / 2, / 4, / 8; the wyvern's gate
+ * wall, railing and castle) moving at their own speeds put the backdrop's sprite pieces out
+ * of line with it as Richter walked, where the 4:3 fight never moves at all: the parallax is
+ * turned off instead (the user's choice), the whole scene moving as one. With Level ends the
+ * layers go with the camera from where they stood at the arena's own camera; without, they
+ * are held there. The backdrop's own objects (OBJ_LAYER 2, 3: the castle's pieces) are placed
+ * by the game from these layer X's, so they go with them. Drifting layers (the clouds) drift.
+ * (Richter once fell through the floor while this was being tried: that was the floor's end,
+ * see the arena's `right`, not the layers.) */
+#define LAYER_SUB 0x1E00     /* each layer's X fraction */
+#define LAYER_VLO 0x1E7E     /* each layer's X speed: fraction, whole (added each frame, 6F:A6F4) */
+#define LAYER_VHI 0x1E86
+/* Each frame, partway down it, the game works out a layer's speed as half the next layer
+ * in's (6F:A12F: the whole byte, then the fraction, each shifted right) and adds the speeds
+ * in. Set from outside the frame, the layers lagged the camera a frame and shook. So, while
+ * an arena is walkable, the halving is taken out (the two RORs made NOPs): the layers get
+ * the camera's own speed and the game moves them with it, in step; their places are lined
+ * up with the camera's once a frame (flat_layers). */
+static const uint8_t HALVE_SITE[] = {0xBD, 0x86, 0x3E, 0x6A, 0x99, 0x86, 0x3E, 0xBD, 0x7E, 0x3E, 0x6A, 0x99, 0x7E, 0x3E, 0x60};
+static const uint8_t HALVE_FLAT[] = {0xBD, 0x86, 0x3E, 0xEA, 0x99, 0x86, 0x3E, 0xBD, 0x7E, 0x3E, 0xEA, 0x99, 0x7E, 0x3E, 0x60};
+static int halve_site = -1;
+static void halve_patch(Pce *p, bool on)
+{
+    uint8_t *g = p->page[0x6F];
+    if (!g) return;
+    int at_ = hit_find(g, on ? HALVE_SITE : HALVE_FLAT, sizeof HALVE_SITE, halve_site);
+    if (at_ < 0) return;   /* (already as wanted, or not this code) */
+    halve_site = at_;
+    memcpy(g + at_, on ? HALVE_FLAT : HALVE_SITE, sizeof HALVE_SITE);
+    p->cpu.page_gen[0x6F]++;
+}
+#define LAYER_PAGE 0x1E10    /* each layer's X high byte (and the nibble at CAM_PAGE) */
+static int flat_shift = 1 << 30;   /* the picture's shift last frame (1 << 30: none yet) */
+static void layer_set(uint8_t *r, int k, int x)
+{
+    r[CAM_XL + k] = (uint8_t)x;
+    r[LAYER_PAGE + k] = (uint8_t)(x >> 8);
+    r[CAM_PAGE + k] = (uint8_t)((r[CAM_PAGE + k] & 0xF0) | ((x >> 8) & 0x0F));
+}
+static void flat_layers(uint8_t *r, int cam0, int shift)
+{
+    int cam = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL];
+    /* (each from where it stands at the arena's own camera: as the camera locks, the castle
+     * where it naturally is) */
+    for (int k = 1; k <= 3; k++) {
+        layer_set(r, k, (cam0 >> k) + (cam - cam0));
+        r[LAYER_SUB + k] = r[LAYER_SUB];
+    }
+    /* The clouds (layers 4-6) drift by themselves, but the picture's shift that holds the
+     * arena still carried them along as Richter walked: the shift's change is taken back out
+     * of them, so they only drift. */
+    if (flat_shift != 1 << 30 && shift != flat_shift)
+        for (int k = 4; k <= 6; k++) {
+            int x = (r[LAYER_PAGE + k] << 8 | r[CAM_XL + k]) - (shift - flat_shift);
+            layer_set(r, k, x);
+        }
+    flat_shift = shift;
+}
 
 /* Each frame: an open arena (ARENAS) in play is made walkable, its right limit widened by
  * the extension and the left one (WALK_LEFT) likewise; true while it is. Once widened it
@@ -1010,10 +1076,13 @@ static bool arena_walk(Wide *w, Pce *p, uint8_t s)
     uint8_t *r = p->wram;
     int cam0 = -1;
     const uint8_t *quiet = NULL;
+    bool left = false;
     for (size_t i = 0; i < sizeof ARENAS / sizeof ARENAS[0]; i++)
         if ((r[AREA] & 0xFE) == ARENAS[i].area && r[ROOM] == ARENAS[i].room && r[LIMIT_LEFT] == ARENAS[i].cam >> 8) {
             cam0 = ARENAS[i].cam;
             quiet = ARENAS[i].quiet;
+            left = ARENAS[i].left;
+            walk_flat = ARENAS[i].flat;
         }
     int hi = r[LIMIT_RIGHT] * 256 + r[LIMIT_RIGHT + 1];
     bool own = cam0 >= 0 && hi == cam0 && (cam0 & 0xFF) == 0;   /* (the limits as the game has them) */
@@ -1022,12 +1091,18 @@ static bool arena_walk(Wide *w, Pce *p, uint8_t s)
     bool on = s == RONDO_PLAYING && (ours || (own && w->want > 0 && w->open_arenas));
     uint8_t *z = p->page[0x00];
     if (on && z && walk_patch(p, true)) {
-        int e = ours ? hi - cam0 : w->want;
-        if (!ours) {
-            r[LIMIT_RIGHT] = (uint8_t)((cam0 + e) >> 8);
-            r[LIMIT_RIGHT + 1] = (uint8_t)(cam0 + e);
+        /* (as wide as the picture; from a save state made while it was widened otherwise,
+         * by an older build or another width, widened again to this one) */
+        int e = w->want > 0 ? w->want : left ? 1 : hi - cam0;
+        /* (the room as wide as the picture either way, so Level ends holds it still; one
+         * pixel past the arena's own camera on the right at least: with the limits equal the
+         * room is locked again, 4:3) */
+        int er = left ? 1 : e, el = left ? 2 * e - 1 : e;
+        if (cam0 + er != hi) {
+            r[LIMIT_RIGHT] = (uint8_t)((cam0 + er) >> 8);
+            r[LIMIT_RIGHT + 1] = (uint8_t)(cam0 + er);
         }
-        walk_lo = cam0 - e;
+        walk_lo = cam0 - el;
         walk_cam0 = cam0;
         z[WALK_LEFT] = (uint8_t)walk_lo;
         z[WALK_LEFT + 1] = (uint8_t)(walk_lo >> 8);
@@ -1206,7 +1281,105 @@ static int past_limits(int cam, int lo, int hi)
     return right <= left ? right : -left;
 }
 
+/* Leaving a room kept 4:3 with sides beside it (walls: room_sides) through a door: the sides
+ * worked out every frame from the picture's edge columns turned to junk as the camera went
+ * on into the next part (the stair room's door to the courtyard). So the sides as they were
+ * when the leaving starts are kept and go off with the camera, as the room's own picture
+ * does; between them and the picture, on the side away from the door, the room as it was
+ * (leave_vram, which that side is drawn from); toward the door, the map's own (the next part
+ * as the game draws it), drawn unflipped (VDC_SIDE_OWN). */
+static uint16_t side_l[64 * VDC_SIDE_TILES], side_r[64 * VDC_SIDE_TILES];   /* drawn */
+static uint16_t keep_l[64 * VDC_SIDE_TILES], keep_r[64 * VDC_SIDE_TILES];
+static int keep_cam, keep_first, keep_last;
+static int keep_mirrored;   /* (the sides mirrored then: VDC_SIDE_LEFT | VDC_SIDE_RIGHT) */   /* the camera and the picture's map columns then */
+/* How far the game has drawn the next part while leaving (in level columns of 8 px): the room
+ * start drew 44 columns from the camera; as the camera goes, each column written is taken as
+ * the one of its place in the 64-column map nearest the camera (written 64-96 px ahead). The
+ * door side shows nothing past it: the map's columns there are left over from before (the
+ * courtyard's first screen is all it draws through the door; past it, a strip of the stair
+ * room's map). */
+static int leave_lo = -1, leave_hi = -1;
+static void leave_drawn(Pce *p, bool leaving, int cam)
+{
+    static const int map_w[4] = {32, 64, 128, 128};
+    int mw = map_w[(p->vdc.reg[9] >> 4) & 3], cc = cam >> 3;
+    if (!leaving) {
+        leave_lo = leave_hi = -1;
+        return;
+    }
+    if (leave_hi < 0) leave_lo = cc - 8, leave_hi = cc + 44;
+    int delta = cc - (vdc_row_scroll()[0] >> 3);   /* (level column = map column + delta, mod mw) */
+    const uint8_t *wr = vdc_bat_written();
+    for (int i = 0; i < VDC_BAT_WATCH && i < mw * 64; i++) {
+        if (!wr[i]) continue;
+        int c = i % mw, lc = cc - 16 + (((c + delta) - (cc - 16)) % mw + mw) % mw;
+        if (lc > leave_hi) leave_hi = lc;
+        if (lc < leave_lo) leave_lo = lc;
+    }
+}
+
+static void sides_kept(const Vdc *d, bool leaving, int cam, int away)
+{
+    int mh = (d->reg[9] & 0x40) ? 64 : 32;
+    int bx = vdc_row_scroll()[0], first = bx >> 3, last = (bx + 255) >> 3;
+    if (!leaving) {
+        memcpy(keep_l, side_l, sizeof keep_l);
+        memcpy(keep_r, side_r, sizeof keep_r);
+        keep_cam = cam, keep_first = first, keep_last = last;
+        return;
+    }
+    enum { T = VDC_SIDE_TILES };
+    /* (until the camera moves the door side is black: the next part's colours come in a few
+     * frames after its tiles, and 4:3 shows none of it until then) */
+    bool moved = cam != keep_cam;
+    int cc = cam >> 3;   /* (the picture's first column in the level, near enough) */
+    for (int r = 0; r < 64; r++) {
+        uint16_t *l = &side_l[r * T], *rt = &side_r[r * T];
+        const uint16_t *kl = &keep_l[r * T], *kr = &keep_r[r * T];
+        for (int k = 0; k < T; k++) {
+            if (r >= mh) {
+                l[k] = rt[k] = VDC_SIDE_NONE;
+                continue;
+            }
+            /* (the side away from the door is drawn by the renderer from the kept sides and
+             * the room as it was, line by line: vdc_set_side_kept; the door side is the map's
+             * own, as far as the next part is drawn) */
+            if (away < 0)
+                l[k] = kl[k];
+            else
+                l[k] = moved && cc - 1 - k >= leave_lo ? VDC_SIDE_MAP : VDC_SIDE_NONE;
+            if (away > 0)
+                rt[k] = kr[k];
+            else
+                rt[k] = moved && cc + 32 + k <= leave_hi ? VDC_SIDE_MAP : VDC_SIDE_NONE;
+        }
+    }
+}
+
+/* After leaving through a door the next part's picture can stand 70 px over from where the
+ * leaving left it (the courtyard starts at its left end: Level ends puts its wall at the
+ * picture's edge), a jump 4:3 does not make: the shift goes over SHIFT_EASE px a frame then,
+ * for as long as it takes. (Both calls in a frame, the HUD's as it is built and the picture's,
+ * ease from the last picture's shift, w->shift: the same answer.) */
+#define SHIFT_EASE 3
+static int shift_ease;   /* frames of easing left (set while leaving) */
+static int ease_side;    /* the side away from the door, still drawn from the room left behind
+                          * (leave_vram) as the picture eases (-1 left, 1 right, 0 none) */
+static int hud_last;     /* the HUD's last offset (place_hud), eased with the picture */
+static int hud_eased(int to)
+{
+    if (shift_ease <= 0) return to;
+    return to > hud_last + SHIFT_EASE ? hud_last + SHIFT_EASE : to < hud_last - SHIFT_EASE ? hud_last - SHIFT_EASE : to;
+}
+static int picture_shift_to(Wide *w, const uint8_t *r, int cam, int left, int right, int ext, bool keep);
 static int picture_shift(Wide *w, const uint8_t *r, int cam, int left, int right, int ext, bool keep)
+{
+    int to = picture_shift_to(w, r, cam, left, right, ext, keep);
+    if (shift_ease <= 0) return to;
+    return to > w->shift + SHIFT_EASE ? w->shift + SHIFT_EASE : to < w->shift - SHIFT_EASE ? w->shift - SHIFT_EASE : to;
+}
+
+static int picture_shift_to(Wide *w, const uint8_t *r, int cam, int left, int right, int ext, bool keep)
 {
     if (!ext || !w->edges) return 0;
     if (!room_scrolls(r)) return edge_shift(left, right, ext);   /* (a boss's lock: walls kept) */
@@ -1234,7 +1407,7 @@ static void hud_at_build(Wide *w, Pce *p)
     int cam = (r[CAM_PAGE] & 0x0F) << 8 | r[CAM_XL];
     int left, right;
     room_walls(r, cam, &left, &right);
-    place_hud_left(p, ext - picture_shift(w, r, cam, left, right, ext, false));
+    place_hud_left(p, hud_eased(ext - picture_shift(w, r, cam, left, right, ext, false)));
     w->build_cam = cam;   /* (the picture follows it too: wide_frame) */
     w->build_seen = true;
 }
@@ -1559,7 +1732,6 @@ static void on_entry(Pce *p, void *ctx)
  * edges with the tile that most often follows (precedes) its edge tile across the picture,
  * seen at least twice. Art that does not repeat (the title's clouds, story scenes) has no
  * such tile and stays 4:3. */
-static uint16_t side_l[64 * VDC_SIDE_TILES], side_r[64 * VDC_SIDE_TILES];   /* drawn */
 static uint16_t try_l[64 * VDC_SIDE_TILES], try_r[64 * VDC_SIDE_TILES];     /* worked out */
 
 #define PAIRS 4096
@@ -2164,6 +2336,9 @@ static bool tile_blank(const Vdc *d, uint16_t e)
     return true;
 }
 
+/* (in an arena made walkable, rows only a quarter drawn are filled too: the columns past the
+ * art there (a chimney's top) come into the 4:3 pixels, where nothing else covers them) */
+static bool scenery_loose;
 static bool scenery_fill(Pce *p, int cam)
 {
     static const int map_w[4] = {32, 64, 128, 128};
@@ -2199,6 +2374,18 @@ static bool scenery_fill(Pce *p, int cam)
     uint8_t band[64] = {0};   /* 1 scenery, 2 shown by a playfield line */
     bool pf_line[64] = {false}, apart[64] = {false};
     const uint8_t *blank_line = vdc_row_bg_blank();
+    /* (the playfield's scroll is the camera's in most of the game; in some places it stands a
+     * few pixels off it (Stage 1's castle approach: 14 px; the wyvern's arena: 256), and every line looked scrolled
+     * apart: nothing was learned and the railing band's undrawn columns showed bare at the
+     * area's start. So the playfield's offset is the scroll of the line the hero stands on) */
+    {
+        const uint8_t *r = p->wram;
+        int hy = (int16_t)(r[OBJ_YL] | r[OBJ_YH] << 8) - 16;
+        if (hy >= 0 && hy < rows && !blank_line[hy]) {
+            int off = (((rs[hy] & 0x1FF) - cam + 256) & 0x1FF) - 256;
+            span_lo += off, span_hi += off;
+        }
+    }
     for (int y = 0; y < rows; y++) {
         /* (a line that showed no background, as while a new room is put up, tells nothing) */
         if (blank_line[y]) continue;
@@ -2244,7 +2431,7 @@ static bool scenery_fill(Pce *p, int cam)
          * a band is mostly drawn: not a row that is empty but for a tower, say) */
         int drawn = 0;
         for (int c = 0; c < mw; c++) drawn += !blank[r][c];
-        if (best_l < SCENERY_MIN_GAP || best_l >= mw || drawn * 2 < mw) continue;
+        if (best_l < SCENERY_MIN_GAP || best_l >= mw || drawn * (scenery_loose ? 4 : 2) < mw) continue;
         int half = (best_l + 1) / 2;
         uint16_t e = TILE(r, best_s - 1);
         for (int k = 0; k < half && (e = pair_next_n(e, false, true)) != VDC_SIDE_NONE; k++) {
@@ -2255,6 +2442,50 @@ static bool scenery_fill(Pce *p, int cam)
         for (int k = 0; k < best_l - half && (e = pair_next_n(e, true, true)) != VDC_SIDE_NONE; k++) {
             scenery[r * VDC_FILL_W + ((best_s + best_l - 1 - k) & (mw - 1))] = e;
             any = true;
+        }
+        /* what the pairs left (a chain that breaks off: the wyvern's arena, its castle band
+         * and railing) carried on by the row's own repeat, when it has one (the smallest
+         * step its drawn part repeats by) */
+        int period = 0;
+        for (int pp = 1; pp <= 16 && !period; pp++) {
+            int same = 0, seen = 0;
+            for (int c = 0; c < mw; c++) {
+                if (blank[r][c] || blank[r][(c + pp) & (mw - 1)]) continue;
+                seen++;
+                same += TILE(r, c) == TILE(r, c + pp);
+            }
+            if (seen >= 16 && same * 10 >= seen * 9) period = pp;
+        }
+        if (period) {
+            for (int k = 0; k < best_l; k++) {
+                uint16_t *cell = &scenery[r * VDC_FILL_W + ((best_s + k) & (mw - 1))];
+                if (*cell != VDC_SIDE_NONE) continue;
+                int back = (k / period + 1) * period;   /* (back past the stretch's start) */
+                *cell = TILE(r, best_s + k - back);
+                any = true;
+            }
+        }
+        /* (and with no repeat of its own, the run the pairs did fill carried on over the
+         * rest, round and round: the arena's castle band filled only from one side) */
+        {
+            int a0 = -1, a1 = -1;
+            for (int k = 0; k < best_l; k++)
+                if (scenery[r * VDC_FILL_W + ((best_s + k) & (mw - 1))] != VDC_SIDE_NONE) {
+                    if (a0 < 0) a0 = k;
+                    a1 = k;
+                }
+            int n = a1 - a0 + 1;
+            if (a0 >= 0 && n >= 2) {
+                for (int k = a0; k <= a1; k++)   /* (a run with a hole in it is not carried) */
+                    if (scenery[r * VDC_FILL_W + ((best_s + k) & (mw - 1))] == VDC_SIDE_NONE) n = 0;
+                for (int k = 0; n && k < best_l; k++) {
+                    uint16_t *cell = &scenery[r * VDC_FILL_W + ((best_s + k) & (mw - 1))];
+                    if (*cell != VDC_SIDE_NONE) continue;
+                    int j = a0 + (((k - a0) % n) + n) % n;
+                    *cell = scenery[r * VDC_FILL_W + ((best_s + j) & (mw - 1))];
+                    any = true;
+                }
+            }
         }
     }
 #undef TILE
@@ -2383,6 +2614,7 @@ void wide_frame(Wide *w, Pce *p)
     bool scrolls = room_scrolls(r);
     /* objects' tiles kept from columns drawn over them (keep_tiles) */
     keep_tiles(p, want && s == RONDO_PLAYING && scrolls && w->patched && objects_on);
+    leave_drawn(p, s == RONDO_PLAYING && r[0x31] == 0x03, drawn);
     vdc_bat_written_clear();   /* (the next frame's writes, for keep_tiles) */
     /* A boss locks the camera to one screen of a room it scrolled through (Stage 2's: the
      * limits close in on the arena, with no new room): the picture stays wide, the map
@@ -2614,6 +2846,7 @@ void wide_frame(Wide *w, Pce *p)
     }
     if (w->calm && (wrap(cam - w->calm_cam) >= 128 || wrap(cam - w->calm_cam) <= -128)) w->calm = false;
     beyond_door(w, p, s, cam, ext);
+    if (leave_side) shift_ease = 120, ease_side = -leave_side;   /* (leaving, and a while after: see picture_shift) */
     int shift = scrolls ? picture_shift(w, r, drawn, left, right, ext, true) : 0;
     /* leaving through a door: the side away from it drawn from VRAM as it was (leave_vram) */
     {
@@ -2623,12 +2856,8 @@ void wide_frame(Wide *w, Pce *p)
         static uint16_t last_x[PCE_FB_MAX_H], last_y[PCE_FB_MAX_H];
         static int16_t leave_dx[PCE_FB_MAX_H], leave_dy[PCE_FB_MAX_H];
         const uint16_t *bx = vdc_row_scroll(), *by = vdc_row_map_y();
-        if (s == RONDO_PLAYING && r[0x31] == 0x03 && ext && scrolls) {
-            if (!leave_side) {
-                leave_side = (int16_t)(r[OBJ_XL] | r[OBJ_XH] << 8) < 128 ? -1 : 1;
-                memset(leave_dx, 0, sizeof leave_dx);
-                memset(leave_dy, 0, sizeof leave_dy);
-            }
+        /* (the scroll's jumps followed while leaving and while easing after) */
+        if ((s == RONDO_PLAYING && r[0x31] == 0x03 && ext && (scrolls || walls) && leave_side) || ease_side)
             for (int y = 0; y < PCE_FB_MAX_H; y++) {
                 int jx = (bx[y] - last_x[y] + 512) & 511, jy = (by[y] - last_y[y] + 512) & 511;
                 if (jx > 256) jx -= 512;
@@ -2638,11 +2867,42 @@ void wide_frame(Wide *w, Pce *p)
                     leave_dy[y] = (int16_t)(leave_dy[y] - jy);
                 }
             }
+        if (s == RONDO_PLAYING && r[0x31] == 0x03 && ext && (scrolls || walls)) {
+            if (!leave_side) {
+                leave_side = (int16_t)(r[OBJ_XL] | r[OBJ_XH] << 8) < 128 ? -1 : 1;
+                memset(leave_dx, 0, sizeof leave_dx);
+                memset(leave_dy, 0, sizeof leave_dy);
+            }
             vdc_set_side_vram(leave_vram, -leave_side, leave_dx, leave_dy);
+            if (walls) sides_kept(&p->vdc, true, drawn, -leave_side);
+            vdc_set_side_kept(walls ? keep_l : NULL, walls ? keep_r : NULL, keep_first, keep_last);
+            /* (and the door side's sprites: the next part's, the courtyard's trees) */
+            vdc_set_side_sprites(walls ? (leave_side < 0 ? VDC_SIDE_LEFT : VDC_SIDE_RIGHT) : 0);
+            /* (the kept sides flipped and faded as they were: worked out now, with the map
+             * changing under the room's side recipe, a side came and went as mirrored, flipped
+             * and faded to black every few frames; the door side never faded, the next part
+             * fully lit as 4:3 shows it) */
+            if (walls) {
+                vdc_set_side_flip(keep_mirrored);
+                vdc_set_side_fade(keep_mirrored & (leave_side < 0 ? VDC_SIDE_RIGHT : VDC_SIDE_LEFT));
+            }
         } else {
+            if (leave_side) shift_ease = 120;   /* (a leaving just ended: see picture_shift) */
+            else if (shift_ease > 0 && ext && w->shift == picture_shift_to(w, r, drawn, left, right, ext, false)) shift_ease = 0;
+            else if (shift_ease > 0) shift_ease--;
+            if (shift_ease <= 0) ease_side = 0;
             leave_side = 0;
-            vdc_set_side_vram(NULL, 0, NULL, NULL);
-            if (s == RONDO_PLAYING && ext && scrolls) memcpy(leave_vram, p->vdc.vram, sizeof leave_vram);
+            if (ease_side) {
+                /* (easing: the room left behind still beside the new one, going off as the
+                 * picture moves over; its copy kept) */
+                vdc_set_side_vram(leave_vram, ease_side, leave_dx, leave_dy);
+            } else {
+                vdc_set_side_vram(NULL, 0, NULL, NULL);
+                if (s == RONDO_PLAYING && ext && (scrolls || walls)) memcpy(leave_vram, p->vdc.vram, sizeof leave_vram);
+            }
+            if (walls) sides_kept(&p->vdc, false, drawn, 0), keep_mirrored = mirrored;
+            vdc_set_side_kept(NULL, NULL, 0, 0);
+            vdc_set_side_sprites(0);
         }
         memcpy(last_x, bx, sizeof last_x);
         memcpy(last_y, by, sizeof last_y);
@@ -2650,6 +2910,10 @@ void wide_frame(Wide *w, Pce *p)
     if (!scrolls) w->inside_shift = 0;
     vdc_set_wide_shift(shift);
     w->shift = shift;
+    /* (no parallax in a walkable arena: flat_layers) */
+    halve_patch(p, walk && walk_lo >= 0 && walk_flat);
+    if (walk && walk_lo >= 0 && walk_flat) flat_layers(p->wram, walk_cam0, shift);
+    else flat_shift = 1 << 30;
 
     /* the hit test's 256 pixels (HIT_BIAS): the game's own screen, moved towards the side
      * the hero faces only as far as objects there need (4:3: never) */
@@ -2766,8 +3030,10 @@ void wide_frame(Wide *w, Pce *p)
     }
 
     /* scenery bands carried on beside the picture (scenery_fill) */
-    bool filled = !getenv("NOFILL") && ext && show && scrolls && !walk && s == RONDO_PLAYING && scenery_fill(p, cam);
+    scenery_loose = walk;
+    bool filled = ext && show && scrolls && s == RONDO_PLAYING && scenery_fill(p, cam);
     vdc_set_map_fill(filled ? scenery : NULL);
+    vdc_set_map_fill_all(filled && walk);
 
     /* the door just come through kept in the wider picture (door_ghost) */
     door_ghost(p, w->want);   /* (the wanted width: a room's first frames are drawn 4:3) */
@@ -2792,9 +3058,23 @@ void wide_frame(Wide *w, Pce *p)
             p->vdc.wide_x0 = 0;
             p->vdc.wide_x1 = 256 + 2 * ext;
         }
+        /* (nor on the side the room left behind is drawn while the picture eases over) */
+        if (ease_side < 0) p->vdc.wide_x0 = 0;
+        if (ease_side > 0) p->vdc.wide_x1 = 256 + 2 * ext;
+        /* (nor in an arena made walkable: past where its camera may go the level carries on,
+         * drawn; the wyvern's stops short of its floor's end, so its right side is passed) */
+        if (walk) {
+            p->vdc.wide_x0 = 0;
+            p->vdc.wide_x1 = 256 + 2 * ext;
+        }
     } else {
         p->vdc.wide_x0 = 0;
         p->vdc.wide_x1 = 256 + 2 * ext;
+        /* (leaving a room kept 4:3 through a door the game draws the next part only 64 px
+         * past its screen, as it comes: the few pixels beyond flicked between nothing, the
+         * next column, and what was left there; black there, steadily, instead) */
+        if (walls && leave_side > 0) p->vdc.wide_x1 = ext - shift + 256 + 64;
+        if (walls && leave_side < 0) p->vdc.wide_x0 = ext - shift - 64;
     }
     /* Leaving through a door (or off a room's edge, $31 = 03): the game draws the part beyond
      * it into the map before and while it scrolls there, and the 512-pixel map holds that
@@ -2804,7 +3084,10 @@ void wide_frame(Wide *w, Pce *p)
      * part coming in. The side is the one Richter stands on as the leaving starts. */
     /* (the HUD is put again as its sprites are built: hud_at_build) */
     /* (beside a room's repeated walls no sprites are drawn: the HUD stays in the 256) */
-    if (s == RONDO_PLAYING) place_hud(p, walls ? 0 : ext - shift, walls ? 0 : ext + shift);
+    if (s == RONDO_PLAYING) {
+        hud_last = hud_eased(walls ? 0 : ext - shift);
+        place_hud(p, hud_last, walls ? 0 : ext + shift);
+    }
     else vdc_set_sprite_move(0, -1, 0);
     w->active = ext;
 }
@@ -2833,7 +3116,11 @@ void wide_off(Wide *w, Pce *p)
     vdc_set_map_patch(NULL);
     vdc_set_hide_corner(false);
     vdc_set_side_vram(NULL, 0, NULL, NULL);
+    vdc_set_side_kept(NULL, NULL, 0, 0);
+    halve_patch(p, false);
     vdc_set_map_fill(NULL);
+    vdc_set_map_fill_all(false);
+    vdc_set_side_sprites(0);
     vdc_set_sprite_move(0, -1, 0);
     w->shift = 0;
     w->menu_good = 0;

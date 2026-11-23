@@ -29,7 +29,8 @@ bottom of the menu.
   room mirrored at each side, fading to black, instead of black bars.
 - **Open arenas** (on by default): boss rooms that lock the camera to one screen but have no
   wall at their sides are played across the whole 16:9 picture, Richter free to walk to its
-  edges. So far: Stage 3's giant three-eyed skull.
+  edges. So far: Stage 3's giant three-eyed skull, and Stage 1's wyvern (its backdrop held
+  still while it is fought, the clouds drifting on).
 - **Wide menus** (on by default): the file select menus and the continue screen go
   widescreen too, their backgrounds carried on to the sides.
 - **Title art** (on by default): the title screen and the stage map widened with clouds of
