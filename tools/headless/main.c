@@ -498,7 +498,7 @@ int main(int argc, char **argv)
         if (pause_menu_on) pce.pad = pause_menu_pad(&pm, &pce, pce.pad, true);
         if (prompt_dev >= 0) prompt_before_frame(&tp, &pce);
         if (wide_off_at && f == wide_off_at) { wd.want = 0; wide_off(&wd, &pce); }
-        if (secret_on) secret_frame(&pce, true);
+        if (secret_on) secret_frame(&pce, wide > 0);   /* (it needs widescreen, as in the game) */
         wide_frame(&wd, &pce);
         if (wide_edges && wd.shift != last_shift) {   /* --wide-edges: where the picture moves over */
             printf("wide shift %d at frame %ld\n", wd.shift, f);

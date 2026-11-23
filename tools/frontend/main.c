@@ -222,7 +222,8 @@ static void load_title_art(const char *dir)
  * one already played. */
 static void run_frame_as(bool live)
 {
-    if (live) secret_frame(&pce, !ach_hardcore());
+    /* (the easter egg needs widescreen: its fight is made for the wider picture) */
+    if (live) secret_frame(&pce, !ach_hardcore() && wide.want > 0);
     wide_frame(&wide, &pce);
     prompt_before_frame(&prompt, &pce);
     moves_before_frame(&moves, &pce, &move_opts, live);
