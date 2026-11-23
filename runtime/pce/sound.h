@@ -79,6 +79,9 @@ void sound_adpcm_fade(Sound *s, int step);
  * kept until it ends or is stopped), mixed over the game's sound at the ADPCM's level. Not
  * part of the system's state (save states, rewind). */
 void sound_extra_play(const uint8_t *data, uint32_t len, uint8_t rate);
+/* ... at `volume` (256: the ADPCM's level), its highs softened by `soften` (0 none - 255: a
+ * one-pole low-pass, its new sample's share 256 - soften) */
+void sound_extra_play_at(const uint8_t *data, uint32_t len, uint8_t rate, int volume, int soften);
 void sound_extra_stop(void);
 /* Take up to n frames of mixed PSG + ADPCM output (adds to out); returns frames taken. */
 int sound_take(Sound *s, int16_t *out, int n);

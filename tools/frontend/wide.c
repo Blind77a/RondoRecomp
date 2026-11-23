@@ -856,6 +856,8 @@ static const struct { uint8_t area, room; uint16_t cam; uint8_t quiet[4]; } AREN
      * left of the arena, with its launchers $36) sends its bats ($34) in at the game's
      * screen edge once the camera has gone left. */
     {0x14, 0x00, 0x0300, {0x34, 0x35, 0x36}},
+    /* an arena of the host's own (secret.c), its camera held at page 3 while it is fought */
+    {0x10, 0x01, 0x0300, {0}},
 };
 
 static bool open_arena(const uint8_t *r)
