@@ -785,11 +785,10 @@ enum { FIGHT_NONE, FIGHT_DYING, FIGHT_FADE, FIGHT_ARENA };
 #define ARENA_W 396
 #define ARENA_H 224
 #define SKY_LIFT 24          /* the sky raised: the castle over the wall */
-#define DROP 15              /* the arena's ground this much lower than the room's (as the castle
-                              * approach has it); the camera as much higher in the fight */
+#define DROP 17              /* the arena's ground this much lower than the room's: the floor's last
+                              * row the picture's last; the camera as much higher in the fight */
 #define WALL_TOP (108 + DROP) /* the wall band's top row in the arena */
 #define ARENA_X0 698         /* the level's X of the arena's x 0 */
-#define COBBLES_END (208 + DROP) /* the arena's first row below the map's cobbles */
 #define ARENA_FLOOR (ROOM_FLOOR + DROP)
 #define MARIA_ARENA_X 300
 #define GAUGE_ARENA_X 352
@@ -868,6 +867,11 @@ static struct {
     uint32_t torch_pal[2][16];
     uint32_t bolt_pal[1][16], blood_pal[1][16], gauge_pal[1][16];
     struct { float x, y, vx, vy; int age; bool on; } drop[24];
+    /* the music: the stage's, kept while the fight's plays */
+    bool music_ours;
+    int music_start, music_end;
+    int64_t music_pos;
+    bool music_repeat, music_playing;
     uint8_t thunder[THUNDER_LEN];
     bool have_thunder;
     /* the lightning: a strike now and then (7-15 s after the last), the bolt
@@ -935,6 +939,437 @@ static int tile_px(const uint16_t *t, int x, int y)
 {
     int b = 7 - x;
     return (t[y] >> b & 1) | (t[y] >> (8 + b) & 1) << 1 | (t[8 + y] >> b & 1) << 2 | (t[8 + y] >> (8 + b) & 1) << 3;
+}
+
+
+/* ---- Maria, the arena's boss -------------------------------------------------------------- */
+/* Maria fights as the game draws her when she is played: her own sprites (her poses, read from
+ * the disc: where each piece of each is, as the game's sprite table has it), moving as she does
+ * (walk, jump and somersault, crouch and slide, her doves). The host plays her: an AI picks her
+ * moves by Richter's distance, dodges his whip now and then, and keeps to the arena. Her hits
+ * on Richter are the game's own (the player's hit, as an enemy's touch makes it: its type, its
+ * damage, which way he is knocked: the game's code does the rest, his flinch, blinking and
+ * health); his whip and sub-weapons hit her (her gauge empties). Facing left as stored; drawn
+ * mirrored facing right. Arena coordinates: x 0-395 across the picture, y the picture's. */
+/* her poses: the game's animation frames she uses (MP_xx is frame $xx) */
+enum { MP_01, MP_02, MP_03, MP_08, MP_09, MP_0A, MP_0B, MP_0C, MP_0D, MP_0E, MP_0F, MP_10, MP_11, MP_12,
+       MP_13, MP_14, MP_15, MP_17, MP_18, MP_19, MP_1A, MP_1B, MP_1C, MP_1D, MP_1F, MP_20, MP_25, MP_26,
+       MP_27, MP_29, MP_2A, MP_2B, MP_33, MP_34, MP_35, MP_COUNT };
+static const uint8_t MP_FRAME[MP_COUNT] = {
+    0x01, 0x02, 0x03, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,
+    0x13, 0x14, 0x15, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1F, 0x20, 0x25, 0x26,
+    0x27, 0x29, 0x2A, 0x2B, 0x33, 0x34, 0x35};
+/* The game's tables for her, read from the disc:
+ *  - her sprite frames (as at $9000): per frame a pointer to [count][5-byte pieces: flags (bit 0
+ *    32 wide, bits 4-5 the height, bit 3 flipped), y, x (facing right), pattern low, pattern high
+ *    in bits 4-6];
+ *  - her cell uploads (as at $9800): per frame a pointer to a list of [bank][flags][VRAM address]
+ *    [source address][32-byte blocks, when flags bit 7], $FF ending it; frames from 3 on reach
+ *    their list through a byte table (MARIA_REMAP), frames 0-2 directly;
+ *  - her cells (MARIA_GFX, the uploads' source: bank $1C at its start). */
+#define MARIA_FRAMES 0xF2800
+#define MARIA_FRAMES_LEN 0x400
+#define MARIA_FRAMES_CRC 0x4CF29EECu
+#define MARIA_LISTS 0xF3C00
+#define MARIA_LISTS_LEN 0x400
+#define MARIA_LISTS_CRC 0xEDBFC6EAu
+#define MARIA_REMAP 0xF09A5
+#define MARIA_REMAP_LEN 0x36
+#define MARIA_REMAP_CRC 0xE369A5BCu
+#define MP_MAXP 96
+typedef struct { int8_t x, y; uint16_t attr; uint8_t n; uint16_t cell[8]; } MPiece;
+static MPiece mpieces[MP_MAXP];
+static uint16_t mpose_first[MP_COUNT + 1];
+#define MARIA_GFX 0xF8800
+#define MARIA_GFX_LEN 18432
+#define MARIA_GFX_CRC 0xBEB819AEu
+#define DOVE_CELLS 0x105800        /* 3 cells: the wings' beats */
+#define DOVE_PAL 0x129392
+#define DOVE_CRC 0x6B48488Cu
+#define MARIA_FEET 22              /* her feet below her position */
+#define MARIA_HP 32
+#define WHIP_DAMAGE 2
+#define WEAPON_DAMAGE 3
+
+enum { M_INTRO, M_IDLE, M_WALK, M_THROW, M_JUMP, M_CROUCH, M_SLIDE, M_HURT, M_DOWN };
+static const uint8_t WALK_CYCLE[8] = {MP_09, MP_0A, MP_0B, MP_0C, MP_0D, MP_0E, MP_0F, MP_08};
+static const uint8_t FLIP_CYCLE[6] = {MP_10, MP_12, MP_13, MP_14, MP_15, MP_18};
+
+static struct {
+    uint8_t gfx[MARIA_GFX_LEN], dove[3 * 128];
+    uint32_t dove_pal[1][16];
+    float x, y, vx, vy;       /* her feet, arena coordinates */
+    bool right;               /* facing right */
+    int state, t, pose, hp, inv, flash;
+    bool second;              /* the somersault (second jump) done */
+    int walk_for, throws, dir;
+    int dove_wait;            /* frames before she may throw again */
+    int flinch_wait;          /* frames before a hit makes her flinch again */
+    int org, fb0;             /* the picture's, last frame */
+    struct { float x, y, vx, vy; int t; bool on; } dove_[4];
+} mf;
+
+static void maria_reset(void)
+{
+    mf.x = MARIA_ARENA_X + 8;
+    mf.y = ARENA_FLOOR;
+    mf.vx = mf.vy = 0;
+    mf.right = false;
+    mf.state = M_INTRO;
+    mf.t = 0;
+    mf.pose = MP_01;
+    mf.hp = MARIA_HP;
+    mf.inv = mf.flash = 0;
+    mf.dove_wait = mf.flinch_wait = 0;
+    memset(mf.dove_, 0, sizeof mf.dove_);
+}
+
+/* her poses from the game's tables: each piece's place, size and flip, and which of her cells
+ * (128 bytes each, from MARIA_GFX) the frame's uploads put in the VRAM cells it shows */
+static bool maria_poses(const uint8_t *fr, const uint8_t *ls, const uint8_t *rm)
+{
+    int np = 0;
+    for (int k = 0; k < MP_COUNT; k++) {
+        int f = MP_FRAME[k], vram[16];
+        for (int i = 0; i < 16; i++) vram[i] = -1;
+        int la = f < 3 ? 0x19 + 2 * f : 0x1F + 2 * rm[f];
+        if (f >= MARIA_REMAP_LEN || la + 1 >= MARIA_LISTS_LEN) return false;
+        int a = (ls[la] | ls[la + 1] << 8) - 0x9800;
+        for (;;) {
+            if (a < 0 || a >= MARIA_LISTS_LEN) return false;
+            if (ls[a] == 0xFF) break;
+            if (a + 6 > MARIA_LISTS_LEN) return false;
+            int bank = ls[a], fl = ls[a + 1], v = ls[a + 2] | ls[a + 3] << 8, src = ls[a + 4] | ls[a + 5] << 8, cnt = 0;
+            a += 6;
+            if (fl & 0x80) {
+                if (a >= MARIA_LISTS_LEN) return false;
+                cnt = ls[a++];
+            }
+            long off = (long)(bank - 0x1C) * 0x2000 + (src - 0xA000);
+            for (int c = 0; c < cnt / 4; c++) {
+                int cell = v / 64 + c - 0x180;
+                long o = off + c * 128L;
+                if (cell < 0 || cell >= 16 || o < 0 || o % 128 || o + 128 > MARIA_GFX_LEN) return false;
+                vram[cell] = (int)(o / 128);
+            }
+        }
+        int pa = (fr[2 * f] | fr[2 * f + 1] << 8) - 0x9000;
+        if (pa < 0 || pa >= MARIA_FRAMES_LEN) return false;
+        int n = fr[pa];
+        if (pa + 1 + 5 * n > MARIA_FRAMES_LEN || np + n > MP_MAXP) return false;
+        mpose_first[k] = (uint16_t)np;
+        for (int i = 0; i < n; i++) {
+            const uint8_t *e = fr + pa + 1 + 5 * i;
+            int cw = e[0] & 1 ? 2 : 1, cg = e[0] >> 4 & 3, ch = cg == 0 ? 1 : cg == 1 ? 2 : 4;
+            int pat = e[3] | (e[4] >> 4 & 7) << 8, base = (pat >> 1) & ~((cw - 1) | (ch - 1) << 1);
+            MPiece *m = &mpieces[np++];
+            m->x = (int8_t)-((int8_t)e[2] + cw * 16);          /* facing left */
+            m->y = (int8_t)e[1];
+            m->attr = (uint16_t)((cw == 2 ? 0x100 : 0) | cg << 12 | (e[0] & 8 ? 0 : 0x800));
+            m->n = (uint8_t)(cw * ch);
+            for (int c = 0; c < cw * ch; c++) {
+                int v = base + c % cw + c / cw * 2 - 0x180;
+                if (v < 0 || v >= 16 || vram[v] < 0) return false;
+                m->cell[c] = (uint16_t)vram[v];
+            }
+        }
+    }
+    mpose_first[MP_COUNT] = (uint16_t)np;
+    return true;
+}
+
+static bool maria_load(Pce *p)
+{
+    uint8_t dv[3 * 128 + 18], fr[MARIA_FRAMES_LEN], ls[MARIA_LISTS_LEN], rm[MARIA_REMAP_LEN];
+    if (!disc_span(p, MARIA_GFX, MARIA_GFX_LEN, mf.gfx) || crc32_of(mf.gfx, MARIA_GFX_LEN) != MARIA_GFX_CRC) return false;
+    if (!disc_span(p, MARIA_FRAMES, sizeof fr, fr) || crc32_of(fr, sizeof fr) != MARIA_FRAMES_CRC ||
+        !disc_span(p, MARIA_LISTS, sizeof ls, ls) || crc32_of(ls, sizeof ls) != MARIA_LISTS_CRC ||
+        !disc_span(p, MARIA_REMAP, sizeof rm, rm) || crc32_of(rm, sizeof rm) != MARIA_REMAP_CRC ||
+        !maria_poses(fr, ls, rm))
+        return false;
+    if (!disc_span(p, DOVE_CELLS, 3 * 128, dv) || !disc_span(p, DOVE_PAL, 18, dv + 3 * 128) || crc32_of(dv, sizeof dv) != DOVE_CRC)
+        return false;
+    memcpy(mf.dove, dv, 3 * 128);
+    unpack_pal(dv + 3 * 128, mf.dove_pal[0]);
+    return true;
+}
+
+/* a pose at screen x, y (her position), mirrored when facing right */
+static void draw_mpose(const Canvas *cv, int pose, int x, int y, bool right, bool white)
+{
+    for (int i = mpose_first[pose + 1] - 1; i >= (int)mpose_first[pose]; i--) {
+        const MPiece *e = &mpieces[i];
+        int cgy = (e->attr >> 12) & 3, cw = e->attr & 0x100 ? 2 : 1, ch = cgy == 0 ? 1 : cgy == 1 ? 2 : 4;
+        int sw = cw * 16, sh = ch * 16;
+        bool xf = ((e->attr & 0x800) != 0) != right, yf = (e->attr & 0x8000) != 0;
+        int ox = right ? -(e->x + sw) : e->x;
+        for (int yy = 0; yy < sh; yy++)
+            for (int xx = 0; xx < sw; xx++) {
+                int sx = xf ? sw - 1 - xx : xx, sy = yf ? sh - 1 - yy : yy;
+                uint16_t c = e->cell[(sy >> 4) * cw + (sx >> 4)];
+                if (c == 0xFFFF) continue;
+                int v = cell_px(mf.gfx + c * 128, sx & 15, sy & 15);
+                int px = x + ox + xx, py = y + e->y + yy;
+                if (v && DITHER[py & 3][px & 3] >= g_dissolve) plot(cv, px, py, white ? 0xFFFFFFFFu : sc.maria_pal[0][v]);
+            }
+    }
+}
+
+/* Richter in arena coordinates (his feet), from the game's (screen) */
+static void richter_at(Pce *p, float *x, float *y)
+{
+    int sx = (int16_t)(p->wram[W_PX_HI] << 8 | p->wram[W_PX]), sy = (int16_t)(p->wram[W_PY_HI] << 8 | p->wram[W_PY]);
+    *x = (float)(sx + mf.org - mf.fb0);
+    *y = (float)(sy + MARIA_FEET);
+}
+
+/* the game's own hit on the player: type 2, `dmg`, knocked away from x (as an enemy's touch
+ * makes it: 6B:9855); not while he is already hit or blinking */
+static void hurt_richter(Pce *p, int dmg, float from_x)
+{
+    if (p->wram[0x13B0] || p->wram[0x1460]) return;
+    float rx, ry;
+    richter_at(p, &rx, &ry);
+    p->wram[0x13B0] = 2;
+    p->wram[0x12A8] = (uint8_t)dmg;
+    p->wram[0x1778] = from_x > rx ? 1 : 0;   /* (0: knocked right, 1: left) */
+}
+
+static bool overlap(float ax0, float ay0, float ax1, float ay1, float bx0, float by0, float bx1, float by1)
+{
+    return ax0 < bx1 && bx0 < ax1 && ay0 < by1 && by0 < ay1;
+}
+
+/* her box: low while crouched or sliding */
+static void maria_box(float *x0, float *y0, float *x1, float *y1)
+{
+    bool low = mf.state == M_SLIDE || mf.state == M_CROUCH;
+    *x0 = mf.x - 8, *x1 = mf.x + 8, *y1 = mf.y, *y0 = mf.y - (low ? 20 : 44);
+}
+
+/* Richter's weapons on her: the whip's strike and his sub-weapons (his objects 4-15 with a box) */
+static void maria_hits(Pce *p)
+{
+    if (mf.inv || mf.state == M_INTRO || mf.state == M_DOWN) return;
+    float mx0, my0, mx1, my1;
+    maria_box(&mx0, &my0, &mx1, &my1);
+    for (int sl = 1; sl < 16; sl++) {
+        if (!p->wram[0x0A10 + sl]) continue;
+        int hw = p->wram[0x1988 + sl], hh = p->wram[0x1A38 + sl];
+        if (!hw || !hh) continue;
+        bool whip = p->wram[0x1828 + sl] == 5;   /* (its box is set only while it strikes: standing
+                                                   * frames 05-07, crouching 0C-0E, in the air) */
+        if (!whip && sl < 4) continue;
+        int ox = (int16_t)(p->wram[W_PX_HI + sl] << 8 | p->wram[W_PX + sl]);
+        int oy = (int16_t)(p->wram[W_PY_HI + sl] << 8 | p->wram[W_PY + sl]);
+        int ahead = (int8_t)p->wram[0x1930 + sl], below = (int8_t)p->wram[0x19E0 + sl];
+        float cx = (float)(ox + (whip && p->wram[0x0AC0] ? -ahead : ahead) + mf.org - mf.fb0), cy = (float)(oy + below);
+        if (overlap(cx - hw, cy - hh, cx + hw, cy + hh, mx0, my0, mx1, my1)) {
+            mf.hp -= whip ? WHIP_DAMAGE : WEAPON_DAMAGE;
+            mf.inv = 40;
+            mf.flash = 8;
+            float rx, ry;
+            richter_at(p, &rx, &ry);
+            mf.dir = rx < mf.x ? 1 : -1;
+            /* (a flinch now and then: hit again soon after, she only blinks and goes on;
+             * in the air she only flashes) */
+            if (mf.state != M_JUMP && !mf.flinch_wait) {
+                mf.flinch_wait = 150;
+                mf.state = M_HURT, mf.t = 0;
+                mf.vx = 1.6f * (float)mf.dir;
+            }
+            if (mf.hp <= 0) mf.hp = 0, mf.state = M_DOWN, mf.t = 0, mf.vx = 0;
+            return;
+        }
+    }
+}
+
+/* away from Richter if there is room behind her; cornered, forward over him: a somersault
+ * across (or now and then a slide past) */
+#define CORNER 70
+static void maria_escape(float rx)
+{
+    float away = rx < mf.x ? 1.0f : -1.0f;
+    bool cornered = away > 0 ? mf.x > ARENA_W - CORNER : mf.x < CORNER;
+    mf.t = 0;
+    mf.second = false;
+    if (!cornered) {
+        mf.state = M_JUMP, mf.vy = -5.0f, mf.vx = 1.8f * away;
+    } else if (rnd(3)) {
+        mf.state = M_JUMP, mf.vy = -5.4f, mf.vx = -2.6f * away;   /* (over him) */
+        mf.right = away < 0;
+    } else {
+        mf.state = M_CROUCH, mf.dir = away > 0 ? -1 : 1;           /* (a slide past him) */
+    }
+}
+
+static void maria_choose(Pce *p)
+{
+    float rx, ry;
+    richter_at(p, &rx, &ry);
+    float d = rx - mf.x, ad = d < 0 ? -d : d;
+    mf.right = d > 0;
+    int r = rnd(100);
+    mf.t = 0;
+    /* (her doves spaced out: not while one is flying or soon after the last) */
+    bool flying = false;
+    for (int i = 0; i < 4; i++) flying |= mf.dove_[i].on;
+
+    if (ad > 150) {
+        if (r < 60) mf.state = M_WALK, mf.walk_for = 30 + rnd(40), mf.dir = d > 0 ? 1 : -1;
+        else mf.state = M_THROW, mf.throws = 1;
+    } else if (ad > 80) {
+        if (r < 45) mf.state = M_THROW, mf.throws = 1;
+        else if (r < 70) mf.state = M_CROUCH, mf.dir = d > 0 ? 1 : -1;
+        else mf.state = M_JUMP, mf.vy = -5.0f, mf.vx = (d > 0 ? 1.6f : -1.6f), mf.second = false;
+    } else {
+        if (r < 40) maria_escape(rx);
+        else if (r < 70) mf.state = M_CROUCH, mf.dir = d > 0 ? 1 : -1;
+        else mf.state = M_THROW, mf.throws = 1;
+    }
+    if (mf.state == M_THROW && (mf.dove_wait || flying)) {   /* (too soon: in close instead) */
+        if (ad > 120) mf.state = M_WALK, mf.walk_for = 30 + rnd(40), mf.dir = d > 0 ? 1 : -1;
+        else mf.state = M_CROUCH, mf.dir = d > 0 ? 1 : -1;
+    }
+}
+
+/* a dove thrown from her hand toward Richter */
+static void throw_dove(Pce *p)
+{
+    float rx, ry;
+    richter_at(p, &rx, &ry);
+    for (int i = 0; i < 4; i++)
+        if (!mf.dove_[i].on) {
+            mf.dove_[i].on = true;
+            mf.dove_[i].t = 0;
+            mf.dove_[i].x = mf.x + (mf.right ? 12.0f : -12.0f);
+            mf.dove_[i].y = mf.y - 22;   /* (waist high, straight: to be jumped) */
+            mf.dove_[i].vx = mf.right ? 2.2f : -2.2f;
+            mf.dove_[i].vy = 0;
+            return;
+        }
+}
+
+/* before a frame: her move, her doves, the hits */
+static void maria_step(Pce *p)
+{
+    float rx, ry;
+    richter_at(p, &rx, &ry);
+    if (mf.inv) mf.inv--;
+    if (mf.dove_wait) mf.dove_wait--;
+    if (mf.flinch_wait) mf.flinch_wait--;
+    if (mf.flash) mf.flash--;
+    maria_hits(p);
+    mf.t++;
+    switch (mf.state) {
+    case M_INTRO:
+        mf.pose = MP_01;
+        mf.right = rx > mf.x;
+        if (mf.t > 20) maria_choose(p);   /* (straight into the fight) */
+        break;
+    case M_IDLE:
+        mf.pose = (mf.t / 40) % 3 == 2 ? MP_02 : MP_01;
+        mf.right = rx > mf.x;
+        if (mf.t > ((rx - mf.x) * (rx - mf.x) < 80 * 80 ? 6 : 24 + rnd(30))) maria_choose(p);
+        break;
+    case M_WALK:
+        mf.pose = WALK_CYCLE[(mf.t / 5) & 7];
+        mf.right = mf.dir > 0;
+        mf.x += 1.3f * (float)mf.dir;
+        if (mf.t > mf.walk_for || (mf.dir > 0 ? rx - mf.x : mf.x - rx) < 70) mf.state = M_IDLE, mf.t = 0;
+        break;
+    case M_THROW:
+        mf.pose = mf.t < 6 ? MP_29 : mf.t < 12 ? MP_2A : MP_2B;
+        if (mf.t == 8) throw_dove(p), mf.dove_wait = 150;
+        if (mf.t >= 24) {
+            if (--mf.throws > 0) mf.t = 0;
+            else mf.state = M_IDLE, mf.t = 0;
+        }
+        break;
+    case M_JUMP:
+        mf.x += mf.vx;
+        mf.y += mf.vy;
+        mf.vy += 0.25f;
+        if (!mf.second && mf.vy > -1.0f && rnd(3)) mf.second = true, mf.vy = -4.2f, mf.t = 0;   /* (the somersault) */
+        if (mf.second) mf.pose = FLIP_CYCLE[mf.t / 4 < 5 ? mf.t / 4 : 5];
+        else mf.pose = mf.vy < 0 ? MP_17 : MP_11;
+        if (mf.y >= ARENA_FLOOR) {
+            mf.y = ARENA_FLOOR;
+            mf.vx = mf.vy = 0;
+            mf.state = M_CROUCH, mf.t = 100;   /* (a moment crouched on landing) */
+        }
+        if (mf.second && overlap(rx - 7, ry - 44, rx + 7, ry, mf.x - 10, mf.y - 40, mf.x + 10, mf.y)) hurt_richter(p, 8, mf.x);
+        break;
+    case M_CROUCH:
+        if (mf.t >= 100) {   /* (landing) */
+            mf.pose = MP_1B;
+            if (mf.t >= 108) mf.state = M_IDLE, mf.t = 0;
+            break;
+        }
+        mf.pose = mf.t < 4 ? MP_19 : mf.t < 8 ? MP_1A : MP_1B;
+        mf.right = mf.dir > 0;
+        if (mf.t >= 14) mf.state = M_SLIDE, mf.t = 0, mf.vx = 3.4f * (float)mf.dir;
+        break;
+    case M_SLIDE:
+        mf.pose = mf.t < 3 ? MP_1F : mf.t < 6 ? MP_20 : mf.t < 10 ? MP_25 : mf.t < 30 ? MP_26 : MP_27;
+        mf.x += mf.vx;
+        mf.vx *= 0.97f;
+        if (overlap(rx - 7, ry - 44, rx + 7, ry, mf.x - 14, mf.y - 16, mf.x + 14, mf.y)) hurt_richter(p, 8, mf.x);
+        if (mf.t >= 40) mf.state = M_IDLE, mf.t = 0;
+        break;
+    case M_HURT:
+        mf.pose = mf.t < 6 ? MP_33 : mf.t < 12 ? MP_34 : MP_35;
+        mf.x += mf.vx;
+        mf.vx *= 0.9f;
+        if (mf.t >= 20) maria_escape(rx);   /* (straight away from more hits) */
+        break;
+    case M_DOWN:   /* (her gauge empty: the second phase comes in the next stage of this) */
+        mf.pose = MP_35;
+        mf.flash = (mf.t / 4) & 1 ? 2 : 0;
+        if (mf.t >= 90) mf.hp = MARIA_HP, mf.state = M_IDLE, mf.t = 0;
+        break;
+    }
+    /* the whip coming: now and then she jumps it */
+    if ((mf.state == M_IDLE || mf.state == M_WALK) && p->wram[0x0EE0] == 0x03 && (rx - mf.x) * (rx - mf.x) < 90 * 90 && rnd(100) < 4)
+        maria_escape(rx);
+    if (mf.x < 14) mf.x = 14, mf.vx = 0;
+    if (mf.x > ARENA_W - 14) mf.x = ARENA_W - 14, mf.vx = 0;
+    /* touching her hurts, as an enemy does */
+    if (mf.state != M_DOWN && mf.state != M_INTRO && mf.state != M_HURT &&
+        overlap(rx - 7, ry - 44, rx + 7, ry, mf.x - 6, mf.y - 40, mf.x + 6, mf.y))
+        hurt_richter(p, 4, mf.x);
+    /* her doves: flying straight on */
+    for (int i = 0; i < 4; i++) {
+        if (!mf.dove_[i].on) continue;
+        mf.dove_[i].x += mf.dove_[i].vx;
+        mf.dove_[i].y += mf.dove_[i].vy;
+        mf.dove_[i].t++;
+        if (mf.dove_[i].x < -16 || mf.dove_[i].x > ARENA_W + 16) mf.dove_[i].on = false;
+        else if (overlap(rx - 7, ry - 44, rx + 7, ry, mf.dove_[i].x - 6, mf.dove_[i].y - 6, mf.dove_[i].x + 6, mf.dove_[i].y + 6)) {
+            hurt_richter(p, 6, mf.dove_[i].x);
+            mf.dove_[i].on = false;
+        }
+    }
+}
+
+/* after a frame: her doves, her, her gauge's fill */
+static void maria_draw(const Canvas *cv, int base)
+{
+    for (int i = 0; i < 4; i++)
+        if (mf.dove_[i].on) {
+            Piece dv = {0, 0, (uint16_t)(0x1A0 + (mf.dove_[i].t / 4) % 3), (uint16_t)(mf.dove_[i].vx < 0 ? 0x0800 : 0x0000)};
+            draw_frame(cv, &dv, 1, mf.dove, 0x1A0, 0xFFFF, NULL, mf.dove_pal, base + (int)mf.dove_[i].x - 8, (int)mf.dove_[i].y - 8, 16, false, false);
+        }
+    if (!(mf.inv && (mf.inv & 2) && !mf.flash))   /* (blinking while she cannot be hurt) */
+        draw_mpose(cv, mf.pose, base + (int)mf.x, (int)mf.y - MARIA_FEET, mf.right, mf.flash > 0);
+}
+
+static void gauge_fill(const Canvas *cv, int gx, int gy)
+{
+    static const uint32_t TUBE[4] = {0xFFB6B6DAu, 0xFFFFFFFFu, 0xFFDADAFFu, 0xFF9191B6u};
+    int h = mf.hp * 86 / MARIA_HP;
+    for (int ly = 94 - h; ly <= 94; ly++)
+        for (int k = 0; k < 4; k++) plot(cv, gx + 24 + k, gy + ly, TUBE[k]);
 }
 
 static bool fight_load(Pce *p)
@@ -1045,13 +1480,11 @@ static bool fight_load(Pce *p)
             fs.solid[y * ARENA_W + x] = 1;
         }
     }
-    /* black behind the wall (its gaps), from its top course down; the cobbles carried on to
-     * the picture's bottom, their lower 12 rows repeating (not their lit top edge) */
+    /* black behind the wall (its gaps), from its top course down */
     for (int y = WALL_TOP + 13; y < ARENA_H; y++)
         for (int x = 0; x < ARENA_W; x++)
             if (!fs.solid[y * ARENA_W + x]) fs.sky[0][y * ARENA_W + x] = fs.sky[1][y * ARENA_W + x] = 0xFF000000u;
-    for (int y = COBBLES_END; y < ARENA_H; y++)
-        for (int f = 0; f < 2; f++) memcpy(&fs.sky[f][y * ARENA_W], &fs.sky[f][(y - 12) * ARENA_W], ARENA_W * 4);
+    if (!maria_load(p)) return false;
     fs.loaded = 1;
     return true;
 }
@@ -1092,10 +1525,14 @@ static void unlock_camera(Pce *p)
     }
 }
 
+static void music_fight(Pce *p);
+static void music_back(Pce *p);
+
 /* before a frame */
 static void fight_frame(Pce *p)
 {
     if (!in_hidden(p)) {
+        if (fs.state != FIGHT_NONE) music_back(p);
         fs.state = FIGHT_NONE;
         return;
     }
@@ -1116,11 +1553,14 @@ static void fight_frame(Pce *p)
         lock_camera(p);
     } else if (fs.state == FIGHT_FADE && fs.t >= FADE_T) {
         fs.state = FIGHT_ARENA, fs.t = 0;
+        maria_reset();
+        music_fight(p);
         fs.strike_at = -1000;
         fs.next_strike = 120 + rnd(120);   /* (the first soon after the arena comes in) */
     }
     if (fs.state >= FIGHT_FADE && cam_page(p) == 3) p->wram[LIMIT_LEFT_PAGE] = 3;
     if (fs.state == FIGHT_ARENA) {
+        maria_step(p);
         if (fs.t >= fs.next_strike) {
             fs.strike_at = fs.t;
             fs.next_strike = fs.t + 420 + rnd(481);   /* (7-15 s on) */
@@ -1143,10 +1583,10 @@ static uint32_t arena_px(int ax, int y, bool flash)
 /* the arena over the picture, behind the game's sprites; `a` 0-256: how much of it */
 static void draw_arena(const Canvas *cv, int a, bool flash, int fb0)
 {
-    for (int y = 0; y < cv->h && y < ARENA_H; y++)
+    for (int y = 0; y < cv->h; y++)   /* (the picture's last row too: the arena's carried on) */
         for (int fx = 0; fx < cv->w; fx++) {
             if (cv->spr[y * PCE_FB_MAX_W + fx]) continue;
-            uint32_t c = arena_px(fx - fb0, y, flash), *px = &cv->fb[y * PCE_FB_MAX_W + fx];
+            uint32_t c = arena_px(fx - fb0, y < ARENA_H ? y : ARENA_H - 1, flash), *px = &cv->fb[y * PCE_FB_MAX_W + fx];
             if (a >= 256) {
                 *px = c;
                 continue;
@@ -1175,12 +1615,12 @@ static void draw_torches(const Canvas *cv, int base, uint64_t frame)
  * the HUD (top left) left as it is */
 static void fade_sprites(const Canvas *cv, int shown, int fb0)
 {
-    for (int y = 0; y < cv->h && y < ARENA_H; y++)
+    for (int y = 0; y < cv->h; y++)
         for (int fx = 0; fx < cv->w; fx++) {
             if (!cv->spr[y * PCE_FB_MAX_W + fx]) continue;
             int sx = fx - cv->org;
             if (y < 112 && sx < 112) continue;
-            uint32_t c = arena_px(fx - fb0, y, false), *px = &cv->fb[y * PCE_FB_MAX_W + fx], o = *px;
+            uint32_t c = arena_px(fx - fb0, y < ARENA_H ? y : ARENA_H - 1, false), *px = &cv->fb[y * PCE_FB_MAX_W + fx], o = *px;
             int r = ((int)(c >> 16 & 255) * (256 - shown) + (int)(o >> 16 & 255) * shown) >> 8;
             int g = ((int)(c >> 8 & 255) * (256 - shown) + (int)(o >> 8 & 255) * shown) >> 8;
             int b = ((int)(c & 255) * (256 - shown) + (int)(o & 255) * shown) >> 8;
@@ -1212,11 +1652,46 @@ static void blood_step(int cx, int cy)
 }
 
 static bool fight_busy(void) { return fs.state != FIGHT_NONE; }
-static void fight_reset(void) { fs.state = FIGHT_NONE; }
+
+/* The fight's music: the disc's own Bloody Tears (audio track 11), looping, played as the game
+ * plays its music; the stage's put back (where it was) once the room is left. */
+#define FIGHT_TRACK 11
+static void music_fade_out(Pce *p)
+{
+    if (!fs.music_ours) {
+        fs.music_start = p->cdda.start_lba, fs.music_end = p->cdda.end_lba, fs.music_pos = p->cdda.pos;
+        fs.music_repeat = p->cdda.repeat, fs.music_playing = p->cdda.playing;
+        fs.music_ours = true;
+    }
+    p->cdda.fade_step = -3;   /* (as the game's CD_FADE $0C: about 2.5 s) */
+}
+static void music_fight(Pce *p)
+{
+    const DiscTrack *t = disc_track(&p->disc, FIGHT_TRACK);
+    if (!t || t->data) return;
+    p->cdda.start_lba = t->lba;
+    p->cdda.end_lba = t->lba + t->sectors;
+    p->cdda.pos = (int64_t)t->lba * 588;
+    p->cdda.repeat = true;
+    p->cdda.playing = true;
+    p->cdda.volume = 256;
+    p->cdda.fade_step = 0;
+}
+static void music_back(Pce *p)
+{
+    if (!fs.music_ours) return;
+    p->cdda.start_lba = fs.music_start, p->cdda.end_lba = fs.music_end, p->cdda.pos = fs.music_pos;
+    p->cdda.repeat = fs.music_repeat, p->cdda.playing = fs.music_playing;
+    p->cdda.volume = 256;
+    p->cdda.fade_step = 0;
+    fs.music_ours = false;
+}
+static void fight_reset(void) { fs.state = FIGHT_NONE; fs.music_ours = false; }
 static void fight_start(Pce *p)
 {
     if (fs.state == FIGHT_NONE && fight_load(p)) {
         fs.state = FIGHT_DYING, fs.t = 0;
+        music_fade_out(p);
         memset(fs.drop, 0, sizeof fs.drop);
     }
 }
@@ -1232,10 +1707,10 @@ void secret_after_frame(Pce *p)
      * moves and the table shook as Richter walked; the background's X scroll, low 9 bits,
      * tells which) */
     cam += ((((int)vdc_row_scroll()[ROOM_FLOOR - 40] - (cam + 512)) & 0x1FF) ^ 0x100) - 0x100;
-    /* (the arena stands still in the picture: the walkable arena's camera follows Richter while
-     * the picture is moved back by as much, so it is placed by the picture, not the camera,
-     * which the picture follows a frame or two late: that shook it) */
-    int fb0 = (cv.w - ARENA_W) / 2;   /* (the picture's column of the arena's x 0) */
+    /* (the arena in the level, by the camera its picture was drawn with: with Level ends the
+     * walkable arena's picture is moved back as its camera follows Richter, so it stands still
+     * on the screen; without, it scrolls as a room does) */
+    int fb0 = ARENA_X0 - (cam + 512) + cv.org;   /* (the picture's column of the arena's x 0) */
     int lt = fs.t - fs.strike_at;   /* (a strike flashes as the title's: 3 frames, 3 dark, 3) */
     bool flash = fs.state == FIGHT_ARENA && ((lt >= 0 && lt <= 2) || (lt >= 6 && lt <= 8));
     if (fs.state == FIGHT_ARENA) {
@@ -1245,9 +1720,10 @@ void secret_after_frame(Pce *p)
             draw_frame(&cv, BOLT, 6, fs.bolt, 0x199, 0xFFFF, NULL, fs.bolt_pal, base + TITLEART_SIDE + fs.strike_dx,
                        -SKY_LIFT, 224, fs.strike_flip, false);
         draw_torches(&cv, base, p->frame);
-        int my = ARENA_FLOOR - MARIA_H;
-        draw_frame(&cv, MARIA, 2, sc.maria, 0x184, 0xFFFF, NULL, sc.maria_pal, base + MARIA_ARENA_X, my, MARIA_W, true, false);
+        mf.org = cv.org, mf.fb0 = fb0;
+        maria_draw(&cv, base);
         draw_frame(&cv, GAUGE, 3, fs.gauge, 0x1F8, 0xFFFF, NULL, fs.gauge_pal, base + GAUGE_ARENA_X, 16, 32, false, false);
+        gauge_fill(&cv, base + GAUGE_ARENA_X, 16);
         return;
     }
     /* the table, its candle (flickering) and the cards played */
@@ -1313,6 +1789,7 @@ void secret_after_frame(Pce *p)
             draw_frame(&cv, &d1, 1, fs.blood, 0x178, 0xFFFF, NULL, fs.blood_pal, (int)fs.drop[i].x, (int)fs.drop[i].y, 16, false, false);
         }
     if (fs.state == FIGHT_FADE) {
+        mf.org = cv.org, mf.fb0 = fb0;
         draw_arena(&cv, fs.t * 256 / FADE_T, false, fb0);
         int half = FADE_T / 2, shown = fs.t < half ? 256 - fs.t * 256 / half : (fs.t - half) * 256 / half;
         fade_sprites(&cv, shown, fb0);
