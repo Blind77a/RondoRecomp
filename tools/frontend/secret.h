@@ -25,7 +25,9 @@
 #include "pce/pce.h"
 #include "titleart.h"
 
-/* before a frame runs, with p->pad as the game will read it */
+/* before a frame runs, with p->pad as the game will read it; on: allowed (not in
+ * RetroAchievements hardcore mode, and Video > Widescreen 16:9 on: the hidden room's fight is
+ * made for the wider picture) */
 void secret_frame(Pce *p, bool on);
 /* the title art loaded (the arena's sky takes the title's sides from it) */
 void secret_set_title_arts(const TitleArt *arts, int n);

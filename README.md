@@ -56,7 +56,8 @@ What widescreen also takes care of:
 ### Easter egg
 
 There's a door that answers to the Konami code: Up Up Down Down Left Right Left Right B A
-(II I on a PC Engine pad). Off in RetroAchievements hardcore mode.
+(II I on a PC Engine pad). Needs Video > Widescreen 16:9 on; off in RetroAchievements hardcore
+mode.
 
 ### Pause menu
 
