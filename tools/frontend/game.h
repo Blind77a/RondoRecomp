@@ -6,7 +6,8 @@
  * game run (see docs/findings.md, "Game state"):
  *   $30  main state: 02 opening and the title screen, 03 demo play (the title's attract mode,
  *        the save menu's Tactics runs), 04 save menu, 05 playing, 06 area change,
- *        0A story cinematic (e.g. before Stage 0; RUN does not skip it)
+ *        09 story scene with voiced pictures (after Stage 5's Death: Shaft and Annette),
+ *        0A story cinematic (e.g. before Stage 0; RUN skips neither)
  *   $8D  lives (BCD)      $94  hearts (BCD)      $98  health (92 = full bar)
  *   $9F  character: 0 Richter, 1 Maria (each stage loads that character's code)
  *   $1F40-$1F56  the save record of the current game; $1F40 bit 0: Maria can be chosen
@@ -40,6 +41,7 @@ enum {
     RONDO_PLAYING = 0x05,
     RONDO_AREA_CHANGE = 0x06,
     RONDO_GAME_OVER = 0x07,    /* $31: 01-03 GAME OVER over the frozen level, then the continue screen */
+    RONDO_SCENE = 0x09,        /* a story scene of voiced pictures (after Death) */
     RONDO_CINEMATIC = 0x0A,
 };
 
@@ -67,7 +69,11 @@ typedef struct GameWatch {
 } GameWatch;
 
 static inline uint8_t game_state(const Pce *p) { return p->wram[RONDO_STATE]; }
-static inline bool game_in_cinematic(const Pce *p) { return game_state(p) == RONDO_CINEMATIC; }
+/* (both kinds of story scene: Skip cinematics runs either fast) */
+static inline bool game_in_cinematic(const Pce *p)
+{
+    return game_state(p) == RONDO_CINEMATIC || game_state(p) == RONDO_SCENE;
+}
 /* The power-on intro: the story narration and the animated opening (state $02, sub-states
  * $00-$01, about 1:55 on both discs). The game ignores START until the title screen
  * (sub-state $02); later returns to the title skip it ($00 -> $02/$03). */
@@ -94,6 +100,12 @@ static inline bool game_power_on_skippable(const Pce *p)
 }
 static inline void game_allow_power_on_skip(Pce *p) { p->wram[RONDO_SEEN_INTRO] = p->wram[RONDO_SEEN_LOGO] = 1; }
 static inline bool game_playing(const Pce *p) { return game_state(p) == RONDO_PLAYING; }
+
+/* Save the game's progress to its backup RAM file as its own GAME OVER > SAVE & END does
+ * (69:53E1: the score added to the file's total, the progress record $1F40-$1F56 copied in,
+ * written back through the System Card's file routines), without the continue it counts.
+ * NULL when saved, else why not (not in a stage, no save file in use, no file). */
+const char *game_save_progress(Pce *p);
 
 void game_watch_reset(GameWatch *w, const Pce *p);
 /* Call after every emulated frame. */
