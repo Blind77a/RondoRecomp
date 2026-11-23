@@ -912,9 +912,10 @@ static const Piece BOLT[] = {{88, 28, 0x199, 0x8000}, {104, 32, 0x19F, 0x0000}, 
 #define FIN_ECHO 22            /* her cry's echo */
 #define FIN_GONE 130           /* she has come apart */
 #define FIN_RAIN0 30           /* the orbs: falling from then */
-#define FIN_RAIN1 240          /* ...to then */
-#define FIN_FADE 360           /* the fade out starts (some 5 s of orbs to gather) */
-#define FIN_END 420            /* back in the room */
+#define FIN_RAIN1 330          /* ...to then (5 s of them) */
+#define FIN_AFTER_LAST 30      /* the fade out starts this long after the last one is gathered */
+#define FIN_FADE_LEN 60        /* ...and takes this long; then back in the room */
+#define FIN_GATHER_MAX 1200    /* (or 20 s after the rain, the orbs left where they are: one out of reach) */
 /* The orbs are the one a beaten boss leaves (Death's, Stage 5), as the game draws it, from the
  * disc: cells $140-$147 (data track $2E934): $140 the white shining orb, shimmering (flipped
  * every 2 frames), its palette fading to red through the game's own steps ($191461 on, 19
@@ -968,6 +969,7 @@ static struct {
     bool have_death_cry;
     /* the finale: from her end (frames, -1 none); the orbs raining; the fade back in, won */
     int finale_t, won_t;
+    int fade_at;               /* (the finale's fade out: its start, -1 until every orb is gathered) */
     struct { float x, y, vx, vy; int age, spark; bool on; } orb[ORBS];
     uint8_t orb_cells[8 * 128], spark_cells[4 * 128];
     uint32_t orb_pal[ORB_FADES + 1][16], spark_pal[1][16];
@@ -1788,6 +1790,7 @@ static void maria_step(Pce *p)
         }
         else if (mf.t == 1 && fs.finale_t < 0) {   /* (the second phase's end: the finale) */
             fs.finale_t = 0;
+            fs.fade_at = -1;
             if (fs.have_death_yell) sound_extra_play_at(fs.death_yell, MARIA_DEATH_LEN, MARIA_DEATH_RATE, 256, 0);
             memset(fs.orb, 0, sizeof fs.orb);
         }
@@ -2225,7 +2228,15 @@ static void fight_frame(Pce *p)
             sound_extra_play_at(fs.death_yell, MARIA_DEATH_LEN, MARIA_DEATH_RATE, 130, 90);   /* (its echo) */
         orbs_step(p);
         fs.next_strike = fs.t + 600;   /* (no more lightning) */
-        if (fs.finale_t >= FIN_END) {
+        /* (the rain over and every orb gathered: a moment, then the fade out) */
+        if (fs.fade_at < 0 && fs.finale_t >= FIN_RAIN1) {
+            bool left = false;
+            for (int i = 0; i < ORBS; i++) left |= fs.orb[i].on;
+            static int none_for;
+            none_for = left ? 0 : none_for + 1;
+            if (none_for >= FIN_AFTER_LAST || fs.finale_t >= FIN_RAIN1 + FIN_GATHER_MAX) fs.fade_at = fs.finale_t, none_for = 0;
+        }
+        if (fs.fade_at >= 0 && fs.finale_t >= fs.fade_at + FIN_FADE_LEN) {
             /* back to the room: its own limits and camera, the stage's music; won */
             ledge_floor(p, false);
             fs.state = FIGHT_WON;
@@ -2369,7 +2380,7 @@ static void orbs_step(Pce *p)
         if (fs.orb[i].spark >= 0 && ++fs.orb[i].spark >= 16) fs.orb[i].spark = -1;
         if (fs.orb[i].spark < 0 && fs.orb[i].age > ORB_WHITE_T && !rnd(40)) fs.orb[i].spark = 0;
         /* (gathered: Richter touching it) */
-        if (fs.finale_t < FIN_FADE && overlap(rx - 9, ry - 46, rx + 9, ry, fs.orb[i].x - 6, fs.orb[i].y - 6, fs.orb[i].x + 6, fs.orb[i].y + 6)) {
+        if (fs.fade_at < 0 && overlap(rx - 9, ry - 46, rx + 9, ry, fs.orb[i].x - 6, fs.orb[i].y - 6, fs.orb[i].x + 6, fs.orb[i].y + 6)) {
             fs.orb[i].on = false;
             fs.gathered++;
             sfx_request(PICKUP_SFX);
@@ -2794,7 +2805,7 @@ void secret_after_frame(Pce *p)
                     if (fs.have_orb_art) draw_game_orb(&cv, base + (int)fs.orb[i].x, (int)fs.orb[i].y, fs.orb[i].age, fs.orb[i].spark);
                     else draw_orb(&cv, base + (int)fs.orb[i].x, (int)fs.orb[i].y, fs.orb[i].age);
                 }
-            if (fs.finale_t >= FIN_FADE) darken_all(&cv, (fs.finale_t - FIN_FADE) * 256 / (FIN_END - FIN_FADE));
+            if (fs.fade_at >= 0) darken_all(&cv, (fs.finale_t - fs.fade_at) * 256 / FIN_FADE_LEN);
         }
         if (fs.strike_maria && lt >= 0 && lt < STRIKE_HOLD) {
             draw_burst(&cv, base, lt);
