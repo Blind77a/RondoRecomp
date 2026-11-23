@@ -301,17 +301,33 @@ static uint32_t behind_px[PCE_FB_MAX_W * PCE_FB_MAX_H];
 const uint32_t *vdc_behind_pixels(void) { return behind_px; }
 static bool side_real;
 void vdc_set_side_real(bool on) { side_real = on; }
+static int side_sprites;   /* VDC_SIDE_LEFT | VDC_SIDE_RIGHT: sprites drawn there after all */
+void vdc_set_side_sprites(int sides) { side_sprites = sides; }
 static int side_fade;   /* VDC_SIDE_LEFT | VDC_SIDE_RIGHT */
 void vdc_set_side_fade(int sides) { side_fade = sides; }
 static int side_flip;
 void vdc_set_side_flip(int sides) { side_flip = sides; }
 static const uint16_t *map_fill;
+static bool map_fill_all;
 void vdc_set_map_fill(const uint16_t *fill) { map_fill = fill; }
+void vdc_set_map_fill_all(bool all) { map_fill_all = all; }
 static const uint16_t *map_patch;
 void vdc_set_map_patch(const uint16_t *patch) { map_patch = patch; }
 static const uint16_t *side_vram;
 static int side_vram_side;
 static const int16_t *side_vram_dx, *side_vram_dy;
+/* (a jump in a line's scroll from the frame before, seen as the line is drawn: the host
+ * follows it in dx/dy from the next frame on, this one is drawn with it here) */
+static int side_vram_jx, side_vram_jy;
+static const uint16_t *kept_left, *kept_right;
+static int kept_first, kept_last;
+void vdc_set_side_kept(const uint16_t *left, const uint16_t *right, int first, int last)
+{
+    kept_left = left;
+    kept_right = right;
+    kept_first = first;
+    kept_last = last;
+}
 void vdc_set_side_vram(const uint16_t *vram, int side, const int16_t *dx, const int16_t *dy)
 {
     side_vram = vram;
@@ -414,16 +430,19 @@ static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out, int line)
         /* (side VRAM: beyond the original 256 pixels on its side, map and tiles from it) */
         const uint16_t *v = d->vram;
         map = own_map;
-        int prow = row;
+        int prow = row, srow = py >> 3;
+        bool on_vram = false;
         if (side_vram && (side_vram_side < 0 ? x0 + x < 0 : x0 + x >= 256)) {
-            int spy = (y + side_vram_dy[line]) & (mh * 8 - 1);
+            int spy = (y + side_vram_dy[line] + side_vram_jy) & (mh * 8 - 1);
+            on_vram = true;
+            srow = spy >> 3;
             v = side_vram;
             map = &side_vram[(spy >> 3) * mw];
-            px = (sx + x + side_vram_dx[line]) & (mw * 8 - 1);
+            px = (sx + x + side_vram_dx[line] + side_vram_jx) & (mw * 8 - 1);
             prow = spy & 7;
         }
         uint16_t e = map[px >> 3];
-        if (map_fill && w > 256 && (x0 + x < 0 || x0 + x >= 256)) {
+        if (map_fill && w > 256 && (map_fill_all || x0 + x < 0 || x0 + x >= 256)) {
             /* beside the original 256 pixels: the map's own entry, or its fill */
             uint16_t f = map_fill[(py >> 3) * VDC_FILL_W + ((px >> 3) & (VDC_FILL_W - 1))];
             if (f != VDC_SIDE_NONE) e = f;
@@ -439,12 +458,33 @@ static void render_bg(Vdc *d, int y, int x0, int w, uint16_t *out, int line)
             if (k >= VDC_SIDE_TILES) k = VDC_SIDE_TILES - 1;
             if (side_real && col >= 0 && col < mw) k = -1;   /* the map's own, short of wrapping round */
             if (k >= 0) {
-                flip = (side_flip & (col < first ? VDC_SIDE_LEFT : VDC_SIDE_RIGHT)) != 0;
-                e = col < first ? sl[k] : sr[k];
+                bool lft = col < first;
+                flip = (side_flip & (lft ? VDC_SIDE_LEFT : VDC_SIDE_RIGHT)) != 0;
+                if (on_vram && kept_left && kept_right) {
+                    /* (the room as it was: its kept side tiles past where its picture began,
+                     * its own map's columns short of them) */
+                    int oc = px >> 3;
+                    int j = lft ? kept_first - 1 - oc : oc - kept_last - 1;
+                    j = ((j % mw) + mw) % mw;
+                    if (j >= mw / 2) j -= mw;
+                    if (j >= 0) {
+                        if (j >= VDC_SIDE_TILES) j = VDC_SIDE_TILES - 1;
+                        e = (lft ? kept_left : kept_right)[srow * VDC_SIDE_TILES + j];
+                    } else {
+                        flip = false;   /* (e: that map's own entry) */
+                    }
+                } else {
+                    e = lft ? sl[k] : sr[k];
+                    if (e == VDC_SIDE_MAP) {
+                        e = map[px >> 3];
+                        flip = false;
+                    }
+                }
                 if (e == VDC_SIDE_NONE) {
                     out[x] = 0;
                     continue;
                 }
+                if (e & VDC_SIDE_OWN) flip = false;   /* (the map's own entry, as it is) */
             }
         }
         uint32_t base = ((uint32_t)(e & 0x7FF) * 16 + prow) & 0x7FFF;
@@ -564,6 +604,13 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line)
     uint16_t cr = d->reg[R_CR];
     int x0 = -d->fb_wide + fb_shift;
     int orig = d->fb_wide - fb_shift;   /* where the original 256 pixels start */
+    side_vram_jx = side_vram_jy = 0;
+    if (side_vram) {   /* (as the host measures it: a jump past 32 px) */
+        int jx = ((d->reg[R_BXR] & 0x3FF) - row_scroll[row] + 512) & 511, jy = (y - row_map_y[row] + 512) & 511;
+        if (jx > 256) jx -= 512;
+        if (jy > 256) jy -= 512;
+        if (jx > 32 || jx < -32 || jy > 32 || jy < -32) side_vram_jx = -jx, side_vram_jy = -jy;
+    }
     row_scroll[row] = d->reg[R_BXR] & 0x3FF;
     row_map_y[row] = (uint16_t)y;
     if (cr & 0x80) render_bg(d, y, x0, w, bg, row);
@@ -572,7 +619,9 @@ void vdc_line_end(Vdc *d, const Vce *vce, int line)
         /* side tiles: no sprites beside the original 256 pixels (a game parks the ones it
          * does not use just off its screen) */
         for (int x = 0; x < w; x++)
-            if ((x < orig || x >= orig + 256) && !(sp[x] & EXTRA_PX)) sp[x] = 0;
+            if (((x < orig && !(side_sprites & VDC_SIDE_LEFT)) || (x >= orig + 256 && !(side_sprites & VDC_SIDE_RIGHT))) &&
+                !(sp[x] & EXTRA_PX))
+                sp[x] = 0;
     }
     {
         bool any = false;

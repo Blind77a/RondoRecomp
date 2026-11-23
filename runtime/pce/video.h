@@ -138,6 +138,8 @@ int vdc_fb_shift(void);
  * displayed line of the last frame was drawn from. */
 #define VDC_SIDE_TILES 12
 #define VDC_SIDE_NONE 0xFFFF
+#define VDC_SIDE_OWN 0x0800   /* an entry with this bit (not a tile bit here) is never flipped */
+#define VDC_SIDE_MAP 0xFFFE   /* the map's own entry there, as it is (not flipped) */
 void vdc_set_side_tiles(const uint16_t *left, const uint16_t *right);
 /* While on (a menu's pages sliding over), the side tiles give way to the map's own entries
  * wherever the picture has not wrapped round the map (columns 0 to the map's width, counted
@@ -148,6 +150,8 @@ void vdc_set_side_real(bool on);
  * towards its outer edges, to black at them (widescreen's walls repeated beside a room kept
  * 4:3, so they recede rather than stand as part of the room). */
 enum { VDC_SIDE_LEFT = 1, VDC_SIDE_RIGHT = 2 };   /* (the sides, for the two below) */
+/* side tiles: the sides (VDC_SIDE_LEFT | VDC_SIDE_RIGHT) where sprites are drawn after all */
+void vdc_set_side_sprites(int sides);
 void vdc_set_side_fade(int sides);
 /* Side flip (host-side, like the above): side tiles drawn mirrored left to right, which the
  * hardware cannot do; with the side tiles holding the room's columns in mirrored order, the
@@ -166,6 +170,11 @@ void vdc_bat_written_clear(void);
  * NULL = off
  * (widescreen: the room left behind through a door, as it was before the next part's
  * graphics were loaded). */
+/* With side VRAM (below) on a side of side tiles: the side drawn as the room it holds was,
+ * line by line from the scroll each line is drawn with: past first (left) / last (right),
+ * columns of that VRAM's map, its own side tiles kept (left / right, VDC_SIDE_TILES a row,
+ * as for vdc_set_side_tiles); short of them, that map's own columns. NULL: off. */
+void vdc_set_side_kept(const uint16_t *left, const uint16_t *right, int first, int last);
 void vdc_set_side_vram(const uint16_t *vram, int side, const int16_t *dx, const int16_t *dy);
 const uint16_t *vdc_row_map_y(void);
 /* Sprite pixels (host-side, like the above): 1 where the last picture shows a sprite's pixel
@@ -181,6 +190,9 @@ const uint32_t *vdc_behind_pixels(void);
  * 4:3 picture ever shows, carried on in its own tiles (wide.c). NULL for none. */
 #define VDC_FILL_W 128
 void vdc_set_map_fill(const uint16_t *fill);
+/* the fill over the original 256 pixels too (an arena made walkable: its camera goes where the
+ * 4:3 fight never takes it, and the scenery's undrawn columns came into those pixels) */
+void vdc_set_map_fill_all(bool all);
 /* Map patch (host-side, like the above): like the map fill, background map entries drawn
  * instead of the map's own by map position, but anywhere in the picture, the original 256
  * pixels too (widescreen's side recipes: a drainpipe at a room's edge, which the wall laid
