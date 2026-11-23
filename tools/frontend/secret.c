@@ -25,6 +25,8 @@
 /* Stage 1's first area (area $10), as the USA disc loads it */
 #define AREA 0x10
 #define HOUSE 1             /* the house's room, and its route step */
+#define HOUSE_ALT 4         /* the house too: the same grid and header but for where the player
+                             * comes in (room 4: reached another way, as a save state had it) */
 #define B_ROOMS 0x6B        /* the area's room tables, at $8000 */
 #define GRID_PTRS 0x9C30    /* a grid list for each route step */
 #define HEAD_PTRS 0x9C71    /* a header for each room */
@@ -173,14 +175,15 @@ static bool data_ok(Pce *p)
 
 static int cam_page(Pce *p) { return p->wram[W_CAM_PAGE] & 0x0F; }
 static bool playing(Pce *p) { return game_state(p) == RONDO_PLAYING && p->wram[RONDO_SUB] == 1; }
-static bool in_house(Pce *p) { return p->wram[W_AREA] == AREA && p->wram[W_ROOM] == HOUSE && cam_page(p) == 0; }
+static bool house_room(Pce *p) { return p->wram[W_ROOM] == HOUSE || p->wram[W_ROOM] == HOUSE_ALT; }
+static bool in_house(Pce *p) { return p->wram[W_AREA] == AREA && house_room(p) && cam_page(p) == 0; }
 /* (walking in from the street, the room is the house's two frames before the camera leaves the
  * street's page 3, so the hidden room counts only once the game has played in it; then it holds
  * through pauses and the like: hidden_seen) */
 static bool in_hidden(Pce *p)
 {
     int c = cam_page(p);
-    if (p->wram[W_AREA] != AREA || p->wram[W_ROOM] != HOUSE || (c != 2 && c != 3)) return hidden_seen = false;
+    if (p->wram[W_AREA] != AREA || !house_room(p) || (c != 2 && c != 3)) return hidden_seen = false;
     if (playing(p)) hidden_seen = true;
     return hidden_seen;
 }
@@ -395,6 +398,35 @@ static bool door_in_map(Pce *p)
 
 static void scene_hits(Pce *p);
 static void fight_frame(Pce *p);
+static void orbs_step(Pce *p);
+static void grave_step(Pce *p);
+static void grave_reset(void);
+
+/* A sound effect of the game's own, played by its sound driver: before a frame, the CPU is
+ * sent through a few bytes in free work RAM ($29E0) that ask for it as the game does (LDA #id,
+ * JSR $401B: 69:4393, the driver's request) and return to where it was (its PC pushed as a
+ * JSR would). Only while the game's usual banks are in (work RAM at $2000, bank $69 at $4000,
+ * $401B a JMP), the driver not busy ($34 bit 7), and the CPU not in work RAM or the top of
+ * bank 0. (Sound sets are the stage's: the id is the current stage's.) */
+#define SFX_TRAMP 0x09E0   /* work RAM offset ($29E0) */
+static int sfx_want = -1;
+static void sfx_request(int id) { sfx_want = id; }
+static void sfx_inject(Pce *p)
+{
+    if (sfx_want < 0) return;
+    HuC6280 *c = &p->cpu;
+    if (c->mpr[1] != 0xF8 || c->mpr[2] != 0x69 || pce_read8(p, 0x401B) != 0x4C || (p->wram[0x34] & 0x80)) return;
+    if ((c->pc >= 0x2000 && c->pc < 0x4000) || (c->pc >= 0xFA00 && c->mpr[7] == 0x00)) return;
+    static const uint8_t T[14] = {0x08, 0x48, 0xDA, 0x5A, 0xA9, 0x00, 0x20, 0x1B, 0x40, 0x7A, 0xFA, 0x68, 0x28, 0x60};
+    memcpy(&p->wram[SFX_TRAMP], T, sizeof T);
+    p->wram[SFX_TRAMP + 5] = (uint8_t)sfx_want;
+    uint16_t ret = (uint16_t)(c->pc - 1);
+    p->wram[0x100 + c->s] = (uint8_t)(ret >> 8), c->s--;
+    p->wram[0x100 + c->s] = (uint8_t)ret, c->s--;
+    c->pc = 0x2000 + SFX_TRAMP;
+    c->page_gen[0xF8]++;
+    sfx_want = -1;
+}
 
 void secret_frame(Pce *p, bool on)
 {
@@ -427,7 +459,7 @@ void secret_frame(Pce *p, bool on)
         s.open = false;
         return;
     }
-    if (p->wram[W_ROOM] != HOUSE) {
+    if (!house_room(p)) {
         s.open = false;
         s.code = 0;
         return;
@@ -435,6 +467,7 @@ void secret_frame(Pce *p, bool on)
     if (in_hidden(p)) {
         fight_frame(p);
         scene_hits(p);
+        sfx_inject(p);
         s.open = true;   /* (it is open on this side, and stays open behind) */
         s.anim = T_OPEN;
         door_show(p, s.anim);
@@ -445,9 +478,9 @@ void secret_frame(Pce *p, bool on)
         return;
     }
     if (!in_house(p) || !door_in_map(p)) return;
-    bool by_door = px(p) >= 160 && px(p) <= 240 && py(p) < 0x50;
+    /* (the code works anywhere in the house, not only by the door) */
     if (!s.open) {
-        if (!by_door || !playing(p)) s.code = 0;
+        if (!playing(p)) s.code = 0;
         else if (press) {
             /* (a press holding the button wanted counts: the frontend's Sub-weapon control,
              * a gamepad's B, reaches the game as Up and II together; for a direction, no other
@@ -609,15 +642,15 @@ static void draw_frame(const Canvas *cv, const Piece *pc, int n, const uint8_t *
         const Piece *e = &pc[i];
         int cgy = (e->attr >> 12) & 3, cw = e->attr & 0x100 ? 2 : 1, ch = cgy == 0 ? 1 : cgy == 1 ? 2 : 4;
         int sw = cw * 16, sh = ch * 16;
-        bool xf = ((e->attr & 0x800) != 0) != flip;
+        bool xf = ((e->attr & 0x800) != 0) != flip, yf = (e->attr & 0x8000) != 0;
         int ex = flip ? w - (e->x + sw) : e->x;
         uint16_t first = (uint16_t)(e->cell & ~((cw - 1) | (ch - 1) << 1));
         for (int yy = 0; yy < sh; yy++)
             for (int xx = 0; xx < sw; xx++) {
-                int cx = xf ? sw - 1 - xx : xx;
-                uint16_t cell = (uint16_t)(first + (cx >> 4) + (yy >> 4) * 2);
+                int cx = xf ? sw - 1 - xx : xx, cy = yf ? sh - 1 - yy : yy;
+                uint16_t cell = (uint16_t)(first + (cx >> 4) + (cy >> 4) * 2);
                 const uint8_t *src = cells2 && cell >= base2 ? cells2 + (cell - base2) * 128 : cells + (cell - base) * 128;
-                int c = cell_px(src, cx & 15, yy & 15);
+                int c = cell_px(src, cx & 15, cy & 15);
                 int px = x + ex + xx, py = y + e->y + yy;
                 if (c && DITHER[py & 3][px & 3] >= g_dissolve) plot(cv, px, py, white ? 0xFFFFFFFFu : pal[e->attr & 15][c]);
             }
@@ -787,7 +820,7 @@ static void candle_glow(const Canvas *cv, int x, int y, uint64_t frame)
  * sprites, from the disc: the title's map and tiles unpacked by the game's own run-length
  * scheme (6C:81CD), the wall's 32-pixel blocks and tiles, sprites and palettes as they are
  * stored. Not in save states (a state loaded mid-fight shows the card game again). */
-enum { FIGHT_NONE, FIGHT_DYING, FIGHT_FADE, FIGHT_ARENA };
+enum { FIGHT_NONE, FIGHT_DYING, FIGHT_FADE, FIGHT_ARENA, FIGHT_WON };
 #define DYING_T 150
 #define FADE_T 60
 #define ARENA_W 396
@@ -853,6 +886,52 @@ static const Piece BOLT[] = {{88, 28, 0x199, 0x8000}, {104, 32, 0x19F, 0x0000}, 
 #define THUNDER_LEN 0x17A2
 #define THUNDER_CRC 0x18AD4485u
 #define THUNDER_VOLUME 256    /* (the ADPCM's own level) */
+/* Maria's yell as she is hurt (when she is played, the stage's sound bank is hers, record $601
+ * of the data track: the yell is its first clip, $326 bytes at rate code 8) */
+#define MARIA_YELL_AT (0x601 * 2048)
+#define MARIA_YELL_LEN 0x326
+#define MARIA_YELL_CRC 0x9A54BF9Bu
+#define MARIA_YELL_RATE 8
+/* ...and her cry as she dies: further on in the same bank ($93C, $B32 bytes) */
+#define MARIA_DEATH_AT (0x601 * 2048 + 0x93C)
+#define MARIA_DEATH_LEN 0xB32
+#define MARIA_DEATH_CRC 0x4D4CA4F8u
+#define MARIA_DEATH_RATE 6
+/* Death's cry as he falls (Stage 5's ship, his first form beaten: the sound the game plays
+ * there (AD_PLAY from $6626 of its sound memory, $E54 bytes at rate code 8), from the data
+ * track at $876E26) */
+#define DEATH_CRY_AT 0x876E26
+#define DEATH_CRY_LEN 0xE54
+#define DEATH_CRY_CRC 0x1E3A59F5u
+#define DEATH_CRY_RATE 8     /* (drawn out: slower and deeper than the game's 8) */
+/* The finale, when her second gauge is emptied: she flashes, shakes and comes apart with her
+ * cry (and its echo), red orbs (a beaten boss's, as the host draws them) rain down all over
+ * the arena and bounce, the picture fades out and back into the room: the card game over,
+ * a tombstone where Death was struck down. */
+#define ORBS 48
+#define FIN_ECHO 22            /* her cry's echo */
+#define FIN_GONE 130           /* she has come apart */
+#define FIN_RAIN0 30           /* the orbs: falling from then */
+#define FIN_RAIN1 240          /* ...to then */
+#define FIN_FADE 360           /* the fade out starts (some 5 s of orbs to gather) */
+#define FIN_END 420            /* back in the room */
+/* The orbs are the one a beaten boss leaves (Death's, Stage 5), as the game draws it, from the
+ * disc: cells $140-$147 (data track $2E934): $140 the white shining orb, shimmering (flipped
+ * every 2 frames), its palette fading to red through the game's own steps ($191461 on, 19
+ * bytes apart, 7 of them); then $141 the red orb with a fireball turning in it ($142-$147,
+ * behind it) in its palette ($19156B), sparkles about it now and then ($1F3-$1F6, $104180, in
+ * the doves' palette). Richter gathers them: each one the game's pickup blip (its sound effect
+ * $0B, sfx_request). */
+#define ORB_CELLS 0x2E934
+#define ORB_FADE 0x191461
+#define ORB_FADE_STEP 0x13
+#define ORB_FADES 7
+#define ORB_PAL 0x19156B
+#define SPARK_CELLS 0x104180
+#define ORB_ART_CRC 0xC8D3A101u
+#define ORB_WHITE_T 42         /* frames white, fading to red */
+#define PICKUP_SFX 0x0B
+#define WON_FADE 60            /* and the room fades in */
 #define THUNDER_SOFTEN 0
 static const Piece GAUGE[] = {{16, 32, 0x1F9, 0x3000}, {16, 0, 0x1FC, 0x1000}, {0, 0, 0x1F8, 0x1000}};
 /* the castle approach's standing torches: cells 0xB0-0xBB (with the wall's tiles), the flame in
@@ -881,13 +960,51 @@ static struct {
     int64_t music_pos;
     bool music_repeat, music_playing;
     uint8_t thunder[THUNDER_LEN];
+    uint8_t yell[MARIA_YELL_LEN];
+    bool have_yell;
+    uint8_t death_yell[MARIA_DEATH_LEN];
+    bool have_death_yell;
+    uint8_t death_cry[DEATH_CRY_LEN];   /* Death's own, as he is struck down */
+    bool have_death_cry;
+    /* the finale: from her end (frames, -1 none); the orbs raining; the fade back in, won */
+    int finale_t, won_t;
+    struct { float x, y, vx, vy; int age, spark; bool on; } orb[ORBS];
+    uint8_t orb_cells[8 * 128], spark_cells[4 * 128];
+    uint32_t orb_pal[ORB_FADES + 1][16], spark_pal[1][16];
+    bool have_orb_art;
+    int gathered;
     bool have_thunder;
     /* the lightning: a strike now and then (7-15 s after the last), the bolt
      * somewhere over the sky, the game's thunder after it */
     int strike_at, next_strike, strike_dx;
     bool strike_flip;
-
+    /* the second phase: the moonlit fade (0-256), the ledges (their tiles and palette, how far
+     * they have come in: 0-256, solid at 256), the bolt that strikes Maria (its points) */
+    int dim, ledge_a;
+    bool strike_maria;
+    int16_t bolt_pts[16][2];
+    int n_bolt_pts;
+    uint8_t stone[128];
+    uint32_t stone_pal[1][16];
+    uint32_t torch_dim[2][16];
+    /* the map entries the ledges' floor replaced (restored when they go) */
+    uint16_t bat_saved[3 * 2 * 6];
+    int bat_at[3 * 2 * 6];
+    int n_bat;
 } fs;
+
+/* The second phase's ledges: the castle stone block of Stage 1's stair room (area $10 room 5:
+ * tiles $124, $125 over $134, $135, palette 6), three ledges of three blocks, solid (floor
+ * tiles written into the game's map under them: the game's collision reads the map). Arena
+ * x on the map's 8-px grid (the arena's x 0 is level X 698). */
+#define STONE_TILES 0x278A80   /* $124, $125; $134, $135 at + $200 */
+#define STONE_PAL 0x28949D
+#define STONE_CRC 0xB66B192Cu
+#define LEDGES 3
+static const int16_t LEDGE_X[LEDGES] = {70, 174, 278}, LEDGE_Y[LEDGES] = {165, 130, 165};
+#define LEDGE_BLOCKS 3
+#define P2_TRACK 13            /* the second phase's music */
+static void music_track(Pce *p, int track);
 
 void secret_set_title_arts(const TitleArt *arts, int n)
 {
@@ -996,10 +1113,41 @@ static uint16_t mpose_first[MP_COUNT + 1];
 #define DOVE_CRC 0x6B48488Cu
 #define MARIA_FEET 22              /* her feet below her position */
 #define MARIA_HP 32
+#define MARIA_HP2 (MARIA_HP * 3 / 2)   /* the second phase's gauge: half as much again */
 #define WHIP_DAMAGE 2
 #define WEAPON_DAMAGE 3
 
 enum { M_INTRO, M_IDLE, M_WALK, M_THROW, M_JUMP, M_CROUCH, M_SLIDE, M_HURT, M_DOWN };
+/* The second phase: her gauge filled again, afterimages trailing her (fading magenta echoes
+ * of where she was 6, 12 and 18 frames before), her doves thrown two at a time a second
+ * apart. */
+#define TRAIL 20
+#define REFILL_T 90               /* frames her gauge takes to fill again */
+#define DOVE_GAP 60               /* frames between the two doves of the second phase */
+/* Her sub-weapons in the second phase, as she has them when she is played (her items, bank $82
+ * of her CD-RAM, the data track at $F4800 on; her uploads list them at 6C:9C3E):
+ *  - the cat: 30 cells from $1B0, packed as the game packs VRAM uploads (6C:81CD), with its
+ *    palette at $F4121: running $1B0/$1B2/$1B4/$1B6 (32 x 16), leaping $1BC, pouncing $1B8
+ *    (32 x 32); it leaps from her hand, runs at Richter along the ground and springs at him;
+ *  - the red birds: her doves' cells in the birds' palette ($F4147), two at once, up and out
+ *    to either side, then each turning on Richter.
+ * Her cry with them is in her sound bank (record $601: $146E on, $355 bytes, rate code 8).
+ * Their touch hurts him; the whip (or a sub-weapon of his) strikes them down. */
+#define CAT_PACKED 0xF4800
+#define CAT_PACKED_LEN 1036
+#define CAT_PAL 0xF4121
+#define CAT_CRC 0xB2039C28u        /* (the packed cells and the palette) */
+#define CAT_CELLS 30
+#define RED_PAL 0xF4147
+#define RED_PAL_CRC 0x6EDE936Au
+#define SUB_CRY_AT (0x601 * 2048 + 0x146E)
+#define SUB_CRY_LEN 0x355
+#define SUB_CRY_CRC 0x79B54028u
+#define SUB_CHANCE 40             /* in 100: a throw of the second phase is a sub-weapon */
+#define SUB_WAIT 300              /* frames before the next sub-weapon */
+#define STRIKE2_T 36              /* the second strike, frames after the first */
+#define STRIKE_HOLD 16            /* frames a strike holds her (white, shaking) and its bolt shows */
+static const uint32_t ECHO_RGB = 0xC828DCu;   /* (200, 40, 220) */
 static const uint8_t WALK_CYCLE[8] = {MP_09, MP_0A, MP_0B, MP_0C, MP_0D, MP_0E, MP_0F, MP_08};
 static const uint8_t FLIP_CYCLE[6] = {MP_10, MP_12, MP_13, MP_14, MP_15, MP_18};
 
@@ -1010,11 +1158,24 @@ static struct {
     bool right;               /* facing right */
     int state, t, pose, hp, inv, flash;
     bool second;              /* the somersault (second jump) done */
+    bool fall;                /* off a ledge's edge: falling, no somersault */
+    int shake;                /* drawn this far over (struck by the lightning) */
     int walk_for, throws, dir;
     int dove_wait;            /* frames before she may throw again */
+    int phase;                /* 1, then 2 once her gauge has been emptied and filled again */
+    struct { float x, y; uint8_t pose; bool right; } trail[TRAIL];   /* (her last frames, for
+                              * the second phase's afterimages; trail_at the newest) */
+    int trail_at;
     int flinch_wait;          /* frames before a hit makes her flinch again */
     int org, fb0;             /* the picture's, last frame */
     struct { float x, y, vx, vy; int t; bool on; } dove_[4];
+    /* the second phase's sub-weapons (subw: the throw's, 0 doves, 1 the cat, 2 the birds) */
+    uint8_t cat_cells[CAT_CELLS * 128], sub_cry[SUB_CRY_LEN];
+    uint32_t cat_pal[1][16], red_pal[1][16];
+    bool have_cat, have_red, have_sub_cry;
+    int subw, sub_wait;
+    struct { float x, y, vx, vy; int t, mode, hit; bool on; } cat;   /* mode 0 leap, 1 run, 2 pounce */
+    struct { float x, y, vx, vy; int t, hit; bool on; } red[2];
 } mf;
 
 static void maria_reset(void)
@@ -1030,6 +1191,54 @@ static void maria_reset(void)
     mf.inv = mf.flash = 0;
     mf.dove_wait = mf.flinch_wait = 0;
     memset(mf.dove_, 0, sizeof mf.dove_);
+    memset(&mf.cat, 0, sizeof mf.cat);
+    memset(mf.red, 0, sizeof mf.red);
+    mf.subw = mf.sub_wait = 0;
+    mf.phase = 1;
+    mf.fall = false;
+    mf.shake = 0;
+    memset(mf.trail, 0, sizeof mf.trail);
+    mf.trail_at = -1;
+}
+
+/* The game's packed VRAM uploads (6C:81CD), unpacked into `out` (VRAM words from `base` on,
+ * `cap` bytes): per control byte, $FF the end; $00 n, high byte, n low bytes (n words sharing
+ * a high byte); $FE offset (the write address moved to base + offset); $80 + n, n words as
+ * they are; 1-$7F n, a word written n times. (Not $FD: another routine.) */
+static bool vram_unpack(const uint8_t *in, int len, int base, uint8_t *out, int cap)
+{
+    int pos = 0, a = base;
+    memset(out, 0, (size_t)cap);
+#define PUT(w) do { int o_ = (a - base) * 2; if (o_ >= 0 && o_ + 1 < cap) out[o_] = (uint8_t)(w), out[o_ + 1] = (uint8_t)((w) >> 8); a++; } while (0)
+    while (pos < len) {
+        int c = in[pos];
+        if (c == 0xFF) return true;
+        if (c == 0x00) {
+            if (pos + 3 > len) return false;
+            int n = in[pos + 1], hi = in[pos + 2];
+            if (pos + 3 + n > len) return false;
+            for (int k = 0; k < n; k++) PUT(in[pos + 3 + k] | hi << 8);
+            pos += 3 + n;
+        } else if (c == 0xFE) {
+            if (pos + 3 > len) return false;
+            a = base + (in[pos + 1] | in[pos + 2] << 8);
+            pos += 3;
+        } else if (c == 0xFD) {
+            return false;
+        } else if (c & 0x80) {
+            int n = c & 0x7F;
+            if (pos + 1 + 2 * n > len) return false;
+            for (int k = 0; k < n; k++) PUT(in[pos + 1 + 2 * k] | in[pos + 2 + 2 * k] << 8);
+            pos += 1 + 2 * n;
+        } else {
+            if (pos + 3 > len) return false;
+            int w = in[pos + 1] | in[pos + 2] << 8;
+            for (int k = 0; k < c; k++) PUT(w);
+            pos += 3;
+        }
+    }
+#undef PUT
+    return false;
 }
 
 /* her poses from the game's tables: each piece's place, size and flip, and which of her cells
@@ -1099,11 +1308,43 @@ static bool maria_load(Pce *p)
         return false;
     memcpy(mf.dove, dv, 3 * 128);
     unpack_pal(dv + 3 * 128, mf.dove_pal[0]);
+    /* (her sub-weapons: without them, doves only) */
+    {
+        uint8_t pk[CAT_PACKED_LEN + 18], rp[18];
+        mf.have_cat = disc_span(p, CAT_PACKED, CAT_PACKED_LEN, pk) && disc_span(p, CAT_PAL, 18, pk + CAT_PACKED_LEN) &&
+                      crc32_of(pk, sizeof pk) == CAT_CRC &&
+                      vram_unpack(pk, CAT_PACKED_LEN, 0x6C00, mf.cat_cells, sizeof mf.cat_cells);
+        if (mf.have_cat) unpack_pal(pk + CAT_PACKED_LEN, mf.cat_pal[0]);
+        mf.have_red = disc_span(p, RED_PAL, 18, rp) && crc32_of(rp, 18) == RED_PAL_CRC;
+        if (mf.have_red) unpack_pal(rp, mf.red_pal[0]);
+        mf.have_sub_cry = disc_span(p, SUB_CRY_AT, SUB_CRY_LEN, mf.sub_cry) && crc32_of(mf.sub_cry, SUB_CRY_LEN) == SUB_CRY_CRC;
+    }
     return true;
 }
 
 /* a pose at screen x, y (her position), mirrored when facing right */
+/* (a pixel blended over what is there: the afterimages) */
+static void blend(const Canvas *cv, int x, int y, uint32_t rgb, int alpha)
+{
+    int fx = x + cv->org;
+    if (fx < 0 || fx >= cv->w || y < 0 || y >= cv->h) return;
+    if (cv->spr[y * PCE_FB_MAX_W + fx]) return;
+    uint32_t *d = &cv->fb[y * PCE_FB_MAX_W + fx], o = *d, c = 0xFF000000u;
+    for (int sh = 0; sh < 24; sh += 8) {
+        int a = (int)(o >> sh & 0xFF), b = (int)(rgb >> sh & 0xFF);
+        c |= (uint32_t)(a + (b - a) * alpha / 255) << sh;
+    }
+    *d = c;
+}
+
+static void draw_mpose_as(const Canvas *cv, int pose, int x, int y, bool right, bool white, int echo);
 static void draw_mpose(const Canvas *cv, int pose, int x, int y, bool right, bool white)
+{
+    draw_mpose_as(cv, pose, x, y, right, white, 0);
+}
+
+/* echo: 0 herself; else her form in ECHO_RGB, that see-through (alpha 1-255) */
+static void draw_mpose_as(const Canvas *cv, int pose, int x, int y, bool right, bool white, int echo)
 {
     for (int i = mpose_first[pose + 1] - 1; i >= (int)mpose_first[pose]; i--) {
         const MPiece *e = &mpieces[i];
@@ -1118,7 +1359,9 @@ static void draw_mpose(const Canvas *cv, int pose, int x, int y, bool right, boo
                 if (c == 0xFFFF) continue;
                 int v = cell_px(mf.gfx + c * 128, sx & 15, sy & 15);
                 int px = x + ox + xx, py = y + e->y + yy;
-                if (v && DITHER[py & 3][px & 3] >= g_dissolve) plot(cv, px, py, white ? 0xFFFFFFFFu : sc.maria_pal[0][v]);
+                if (!v || DITHER[py & 3][px & 3] < g_dissolve) continue;
+                if (echo) blend(cv, px, py, ECHO_RGB, echo);
+                else plot(cv, px, py, white ? 0xFFFFFFFFu : sc.maria_pal[0][v]);
             }
     }
 }
@@ -1146,6 +1389,24 @@ static void hurt_richter(Pce *p, int dmg, float from_x)
 static bool overlap(float ax0, float ay0, float ax1, float ay1, float bx0, float by0, float bx1, float by1)
 {
     return ax0 < bx1 && bx0 < ax1 && ay0 < by1 && by0 < ay1;
+}
+
+/* a ledge's top on the screen: on the map's 8-px rows, where its floor in the map stands (the
+ * row its place falls in) */
+static int ledge_top(int l)
+{
+    return LEDGE_Y[l] + 1 - (vdc_row_map_y()[LEDGE_Y[l] + 1] & 7);
+}
+
+/* the ground under her at x, from y on down: a ledge's top (once they are solid) or the floor */
+static float ground_at(float x, float y)
+{
+    float g = (float)ARENA_FLOOR;
+    if (fs.ledge_a >= 256)
+        for (int l = 0; l < LEDGES; l++)
+            if (x >= LEDGE_X[l] - 4 && x < LEDGE_X[l] + 16 * LEDGE_BLOCKS + 4 && ledge_top(l) >= y - 0.5f && ledge_top(l) < g)
+                g = (float)ledge_top(l);
+    return g;
 }
 
 /* her box: low while crouched or sliding */
@@ -1186,7 +1447,7 @@ static void maria_hits(Pce *p)
                 mf.state = M_HURT, mf.t = 0;
                 mf.vx = 1.6f * (float)mf.dir;
             }
-            if (mf.hp <= 0) mf.hp = 0, mf.state = M_DOWN, mf.t = 0, mf.vx = 0;
+            if (mf.hp <= 0) mf.hp = 0, mf.state = M_DOWN, mf.t = 0, mf.vx = 0, mf.vy = 0;
             return;
         }
     }
@@ -1235,7 +1496,15 @@ static void maria_choose(Pce *p)
         else if (r < 70) mf.state = M_CROUCH, mf.dir = d > 0 ? 1 : -1;
         else mf.state = M_THROW, mf.throws = 1;
     }
-    if (mf.state == M_THROW && (mf.dove_wait || flying)) {   /* (too soon: in close instead) */
+    if (mf.state == M_THROW && mf.phase == 2) mf.throws = 2;
+    /* (the second phase: now and then a sub-weapon instead, one at a time) */
+    mf.subw = 0;
+    if (mf.state == M_THROW && mf.phase == 2 && !mf.sub_wait && !mf.cat.on && !mf.red[0].on && !mf.red[1].on &&
+        (mf.have_cat || mf.have_red) && rnd(100) < SUB_CHANCE) {
+        mf.subw = !mf.have_red ? 1 : !mf.have_cat ? 2 : 1 + rnd(2);
+        mf.throws = 1;
+    }
+    if (mf.state == M_THROW && !mf.subw && (mf.dove_wait || flying)) {   /* (too soon: in close instead) */
         if (ad > 120) mf.state = M_WALK, mf.walk_for = 30 + rnd(40), mf.dir = d > 0 ? 1 : -1;
         else mf.state = M_CROUCH, mf.dir = d > 0 ? 1 : -1;
     }
@@ -1255,6 +1524,132 @@ static void throw_dove(Pce *p)
             mf.dove_[i].vx = mf.right ? 2.2f : -2.2f;
             mf.dove_[i].vy = 0;
             return;
+        }
+}
+
+/* her sub-weapon, from her hand */
+static void throw_sub(Pce *p)
+{
+    float rx, ry;
+    richter_at(p, &rx, &ry);
+    float side = mf.right ? 1.0f : -1.0f;
+    if (mf.have_sub_cry) sound_extra_play_at(mf.sub_cry, SUB_CRY_LEN, 8, 256, 0);
+    mf.sub_wait = SUB_WAIT;
+    if (mf.subw == 1) {   /* the cat: a leap out ahead of her */
+        memset(&mf.cat, 0, sizeof mf.cat);
+        mf.cat.on = true;
+        mf.cat.x = mf.x + 12 * side, mf.cat.y = mf.y - 16;
+        mf.cat.vx = 2.2f * side, mf.cat.vy = -2.6f;
+    } else {              /* the birds: up and out, one each way */
+        for (int i = 0; i < 2; i++) {
+            float s2 = i ? -side : side;
+            memset(&mf.red[i], 0, sizeof mf.red[i]);
+            mf.red[i].on = true;
+            mf.red[i].x = mf.x + 8 * s2, mf.red[i].y = mf.y - 30;
+            mf.red[i].vx = 1.7f * s2, mf.red[i].vy = -2.1f;
+        }
+    }
+}
+
+/* Richter's whip or a sub-weapon of his on a box (arena coordinates) */
+static bool richter_strikes(Pce *p, float x0, float y0, float x1, float y1)
+{
+    for (int sl = 1; sl < 16; sl++) {
+        if (!p->wram[0x0A10 + sl]) continue;
+        int hw = p->wram[0x1988 + sl], hh = p->wram[0x1A38 + sl];
+        if (!hw || !hh) continue;
+        bool whip = p->wram[0x1828 + sl] == 5;
+        if (!whip && sl < 4) continue;
+        int ox = (int16_t)(p->wram[W_PX_HI + sl] << 8 | p->wram[W_PX + sl]);
+        int oy = (int16_t)(p->wram[W_PY_HI + sl] << 8 | p->wram[W_PY + sl]);
+        int ahead = (int8_t)p->wram[0x1930 + sl], below = (int8_t)p->wram[0x19E0 + sl];
+        float cx = (float)(ox + (whip && p->wram[0x0AC0] ? -ahead : ahead) + mf.org - mf.fb0), cy = (float)(oy + below);
+        if (overlap(cx - hw, cy - hh, cx + hw, cy + hh, x0, y0, x1, y1)) return true;
+    }
+    return false;
+}
+
+/* the sub-weapons' moves (before a frame) */
+static void subs_step(Pce *p, float rx, float ry)
+{
+    if (mf.sub_wait) mf.sub_wait--;
+    if (mf.cat.on) {
+        float was = mf.cat.y;
+        mf.cat.t++;
+        if (mf.cat.hit) {   /* (struck: it flashes and is gone) */
+            if (++mf.cat.hit > 14) mf.cat.on = false;
+        } else {
+            if (mf.cat.mode == 1) {   /* (running: at him, springing once close) */
+                float d = rx - mf.cat.x;
+                if ((d > 0) == (mf.cat.vx > 0) && (d < 0 ? -d : d) < 44) mf.cat.mode = 2, mf.cat.vy = -3.4f, mf.cat.vx *= 1.4f;
+            }
+            mf.cat.x += mf.cat.vx;
+            mf.cat.y += mf.cat.vy;
+            if (mf.cat.mode != 1) mf.cat.vy += 0.2f;
+            else {
+                float g = ground_at(mf.cat.x, was);
+                if (g > mf.cat.y + 0.5f) mf.cat.mode = 0;   /* (off a ledge's edge) */
+            }
+            float g = mf.cat.vy >= 0 ? ground_at(mf.cat.x, was) : (float)ARENA_FLOOR;
+            if (mf.cat.mode != 1 && mf.cat.vy >= 0 && mf.cat.y >= g) {
+                mf.cat.y = g, mf.cat.vy = 0, mf.cat.mode = 1;
+                mf.cat.vx = mf.cat.vx > 0 ? 2.2f : -2.2f;
+            }
+            if (mf.cat.x < -24 || mf.cat.x > ARENA_W + 24 || mf.cat.t > 400) mf.cat.on = false;
+            float h = mf.cat.mode == 2 ? 28.0f : 14.0f;
+            if (mf.cat.on && overlap(rx - 7, ry - 44, rx + 7, ry, mf.cat.x - 12, mf.cat.y - h, mf.cat.x + 12, mf.cat.y))
+                hurt_richter(p, 6, mf.cat.x);
+            if (mf.cat.on && richter_strikes(p, mf.cat.x - 12, mf.cat.y - h, mf.cat.x + 12, mf.cat.y)) mf.cat.hit = 1;
+        }
+    }
+    for (int i = 0; i < 2; i++) {
+        if (!mf.red[i].on) continue;
+        mf.red[i].t++;
+        if (mf.red[i].hit) {
+            if (++mf.red[i].hit > 14) mf.red[i].on = false;
+            continue;
+        }
+        if (mf.red[i].t > 28) {   /* (then turning on him, a little at a time) */
+            float dx = rx - mf.red[i].x, dy = (ry - 26) - mf.red[i].y, d = sqrtf(dx * dx + dy * dy);
+            if (d < 1) d = 1;
+            mf.red[i].vx += (dx / d * 2.6f - mf.red[i].vx) * 0.06f;
+            mf.red[i].vy += (dy / d * 2.6f - mf.red[i].vy) * 0.06f;
+        } else {
+            mf.red[i].vy += 0.05f;
+        }
+        mf.red[i].x += mf.red[i].vx;
+        mf.red[i].y += mf.red[i].vy;
+        if (mf.red[i].x < -24 || mf.red[i].x > ARENA_W + 24 || mf.red[i].y > ARENA_FLOOR + 8 || mf.red[i].t > 360) {
+            mf.red[i].on = false;
+            continue;
+        }
+        if (overlap(rx - 7, ry - 44, rx + 7, ry, mf.red[i].x - 6, mf.red[i].y - 6, mf.red[i].x + 6, mf.red[i].y + 6)) {
+            hurt_richter(p, 4, mf.red[i].x);
+            mf.red[i].on = false;
+        } else if (richter_strikes(p, mf.red[i].x - 7, mf.red[i].y - 7, mf.red[i].x + 7, mf.red[i].y + 7)) {
+            mf.red[i].hit = 1;
+        }
+    }
+}
+
+/* ...drawn (after a frame) */
+static void subs_draw(const Canvas *cv, int base)
+{
+    if (mf.cat.on && !(mf.cat.hit && (mf.cat.hit & 2))) {
+        static const uint16_t RUN[4] = {0x1B0, 0x1B2, 0x1B4, 0x1B6};
+        Piece pc;
+        int h = 16;
+        if (mf.cat.mode == 1) pc = (Piece){0, 0, RUN[(mf.cat.t / 5) & 3], 0x0100};
+        else if (mf.cat.mode == 2) pc = (Piece){0, 0, 0x1B8, 0x1100}, h = 32;
+        else pc = (Piece){0, 0, 0x1BC, 0x0100};
+        draw_frame(cv, &pc, 1, mf.cat_cells, 0x1B0, 0xFFFF, NULL, mf.cat_pal, base + (int)mf.cat.x - 16, (int)mf.cat.y - h, 32,
+                   mf.cat.vx < 0, mf.cat.hit > 0);
+    }
+    for (int i = 0; i < 2; i++)
+        if (mf.red[i].on && !(mf.red[i].hit && (mf.red[i].hit & 2))) {
+            Piece dv = {0, 0, (uint16_t)(0x1A0 + (mf.red[i].t / 4) % 2), (uint16_t)(mf.red[i].vx < 0 ? 0x0800 : 0x0000)};
+            draw_frame(cv, &dv, 1, mf.dove, 0x1A0, 0xFFFF, NULL, mf.red_pal, base + (int)mf.red[i].x - 8, (int)mf.red[i].y - 8, 16,
+                       false, mf.red[i].hit > 0);
         }
 }
 
@@ -1287,27 +1682,41 @@ static void maria_step(Pce *p)
         if (mf.t > mf.walk_for || (mf.dir > 0 ? rx - mf.x : mf.x - rx) < 70) mf.state = M_IDLE, mf.t = 0;
         break;
     case M_THROW:
+        /* (t below 0: standing between two throws, facing him) */
+        if (mf.t < 0) {
+            mf.pose = MP_01;
+            mf.right = rx > mf.x;
+            break;
+        }
         mf.pose = mf.t < 6 ? MP_29 : mf.t < 12 ? MP_2A : MP_2B;
-        if (mf.t == 8) throw_dove(p), mf.dove_wait = 150;
+        if (mf.t == 8) {
+            if (mf.subw) throw_sub(p);
+            else throw_dove(p), mf.dove_wait = 150;
+        }
         if (mf.t >= 24) {
-            if (--mf.throws > 0) mf.t = 0;
+            if (--mf.throws > 0) mf.t = -(DOVE_GAP - 24);   /* (the next dove DOVE_GAP after) */
             else mf.state = M_IDLE, mf.t = 0;
         }
         break;
-    case M_JUMP:
+    case M_JUMP: {
+        float was = mf.y;
         mf.x += mf.vx;
         mf.y += mf.vy;
         mf.vy += 0.25f;
-        if (!mf.second && mf.vy > -1.0f && rnd(3)) mf.second = true, mf.vy = -4.2f, mf.t = 0;   /* (the somersault) */
+        if (!mf.second && !mf.fall && mf.vy > -1.0f && rnd(3)) mf.second = true, mf.vy = -4.2f, mf.t = 0;   /* (the somersault) */
         if (mf.second) mf.pose = FLIP_CYCLE[mf.t / 4 < 5 ? mf.t / 4 : 5];
         else mf.pose = mf.vy < 0 ? MP_17 : MP_11;
-        if (mf.y >= ARENA_FLOOR) {
-            mf.y = ARENA_FLOOR;
+        /* (landing: on the floor, or falling onto a ledge) */
+        float g = mf.vy > 0 ? ground_at(mf.x, was) : (float)ARENA_FLOOR;
+        if (mf.y >= g) {
+            mf.y = g;
             mf.vx = mf.vy = 0;
+            mf.fall = false;
             mf.state = M_CROUCH, mf.t = 100;   /* (a moment crouched on landing) */
         }
         if (mf.second && overlap(rx - 7, ry - 44, rx + 7, ry, mf.x - 10, mf.y - 40, mf.x + 10, mf.y)) hurt_richter(p, 8, mf.x);
         break;
+    }
     case M_CROUCH:
         if (mf.t >= 100) {   /* (landing) */
             mf.pose = MP_1B;
@@ -1331,11 +1740,67 @@ static void maria_step(Pce *p)
         mf.vx *= 0.9f;
         if (mf.t >= 20) maria_escape(rx);   /* (straight away from more hits) */
         break;
-    case M_DOWN:   /* (her gauge empty: the second phase comes in the next stage of this) */
+    case M_DOWN:
         mf.pose = MP_35;
-        mf.flash = (mf.t / 4) & 1 ? 2 : 0;
-        if (mf.t >= 90) mf.hp = MARIA_HP, mf.state = M_IDLE, mf.t = 0;
+        if (mf.phase == 1) {
+            /* (her gauge empty: lightning strikes her twice, each with her yell, a white burst
+             * from her and the thunder after it, the music changes; the wall and ground go
+             * moonlit, the ledges come in; her gauge fills again, and the second phase begins) */
+            if (mf.t == 1) music_track(p, P2_TRACK);
+            if (mf.t == 1 || mf.t == STRIKE2_T) {
+                fs.strike_at = fs.t;
+                fs.strike_maria = true;
+                fs.next_strike = fs.t + 600;
+                if (fs.have_yell) sound_extra_play_at(fs.yell, MARIA_YELL_LEN, MARIA_YELL_RATE, 256, 0);
+                int x = (int)mf.x + rnd(30) - 15, y = 0, n = 0;
+                fs.bolt_pts[n][0] = (int16_t)x, fs.bolt_pts[n][1] = 0, n++;
+                while (y < (int)mf.y - 40 && n < 15) {
+                    y += 10 + rnd(10);
+                    if (y > (int)mf.y - 40) y = (int)mf.y - 40;
+                    x += rnd(21) - 10;
+                    if (y == (int)mf.y - 40) x = (int)mf.x;
+                    fs.bolt_pts[n][0] = (int16_t)x, fs.bolt_pts[n][1] = (int16_t)y, n++;
+                }
+                fs.n_bolt_pts = n;
+            }
+            /* (struck: white and shaking; after, flashing as her gauge fills) */
+            int lt = fs.t - fs.strike_at;
+            if (lt >= 0 && lt < STRIKE_HOLD) {
+                mf.flash = 2;
+                mf.shake = (lt & 2) ? 2 : -2;
+            } else {
+                mf.shake = 0;
+                mf.flash = (mf.t / 4) & 1 ? 2 : 0;
+            }
+            int t2 = mf.t - STRIKE2_T;   /* (all the rest from the second strike on) */
+            fs.dim = t2 < 6 ? 0 : t2 >= 66 ? 256 : (t2 - 6) * 256 / 60;
+            fs.ledge_a = t2 < 20 ? 0 : t2 >= 60 ? 256 : (t2 - 20) * 256 / 40;
+            mf.hp = t2 <= 0 ? 0 : t2 * MARIA_HP2 / REFILL_T;
+            if (mf.hp >= MARIA_HP2) {
+                mf.hp = MARIA_HP2;
+                mf.phase = 2;
+                mf.flash = 0;
+                mf.shake = 0;
+                mf.inv = 30;
+                mf.state = M_IDLE, mf.t = 0;
+                mf.trail_at = -1;   /* (the echoes start from here) */
+            }
+        }
+        else if (mf.t == 1 && fs.finale_t < 0) {   /* (the second phase's end: the finale) */
+            fs.finale_t = 0;
+            if (fs.have_death_yell) sound_extra_play_at(fs.death_yell, MARIA_DEATH_LEN, MARIA_DEATH_RATE, 256, 0);
+            memset(fs.orb, 0, sizeof fs.orb);
+        }
+        if (mf.phase == 2) {
+            mf.flash = mf.t < 60 && ((mf.t >> 2) & 1) ? 2 : 0;
+            mf.shake = mf.t < 70 ? ((mf.t >> 1) & 1 ? 2 : -2) : 0;
+        }
         break;
+    }
+    /* off a ledge's edge (walking, sliding, knocked back): she falls */
+    if (mf.state != M_JUMP && mf.state != M_INTRO && ground_at(mf.x, mf.y) > mf.y + 0.5f) {
+        mf.state = M_JUMP, mf.vy = 0, mf.fall = true, mf.second = false, mf.t = 0;
+        if (mf.vx == 0) mf.vx = 0.6f * (float)mf.dir;
     }
     /* the whip coming: now and then she jumps it */
     if ((mf.state == M_IDLE || mf.state == M_WALK) && p->wram[0x0EE0] == 0x03 && (rx - mf.x) * (rx - mf.x) < 90 * 90 && rnd(100) < 4)
@@ -1346,6 +1811,15 @@ static void maria_step(Pce *p)
     if (mf.state != M_DOWN && mf.state != M_INTRO && mf.state != M_HURT &&
         overlap(rx - 7, ry - 44, rx + 7, ry, mf.x - 6, mf.y - 40, mf.x + 6, mf.y))
         hurt_richter(p, 4, mf.x);
+    /* the trail (second phase) */
+    if (mf.phase == 2) {
+        int n = (mf.trail_at + 1) % TRAIL;
+        if (mf.trail_at < 0)
+            for (int i = 0; i < TRAIL; i++) mf.trail[i].x = mf.x, mf.trail[i].y = mf.y, mf.trail[i].pose = (uint8_t)mf.pose, mf.trail[i].right = mf.right;
+        mf.trail[n].x = mf.x, mf.trail[n].y = mf.y, mf.trail[n].pose = (uint8_t)mf.pose, mf.trail[n].right = mf.right;
+        mf.trail_at = n;
+    }
+    subs_step(p, rx, ry);
     /* her doves: flying straight on */
     for (int i = 0; i < 4; i++) {
         if (!mf.dove_[i].on) continue;
@@ -1363,19 +1837,33 @@ static void maria_step(Pce *p)
 /* after a frame: her doves, her, her gauge's fill */
 static void maria_draw(const Canvas *cv, int base)
 {
+    subs_draw(cv, base);
     for (int i = 0; i < 4; i++)
         if (mf.dove_[i].on) {
             Piece dv = {0, 0, (uint16_t)(0x1A0 + (mf.dove_[i].t / 4) % 3), (uint16_t)(mf.dove_[i].vx < 0 ? 0x0800 : 0x0000)};
             draw_frame(cv, &dv, 1, mf.dove, 0x1A0, 0xFFFF, NULL, mf.dove_pal, base + (int)mf.dove_[i].x - 8, (int)mf.dove_[i].y - 8, 16, false, false);
         }
-    if (!(mf.inv && (mf.inv & 2) && !mf.flash))   /* (blinking while she cannot be hurt) */
-        draw_mpose(cv, mf.pose, base + (int)mf.x, (int)mf.y - MARIA_FEET, mf.right, mf.flash > 0);
+    /* the second phase's afterimages: where she was 18, 12 and 6 frames before, fading */
+    if (mf.phase == 2 && mf.trail_at >= 0 && mf.state != M_DOWN)
+        for (int k = 0; k < 3; k++) {
+            int back = 18 - 6 * k, i = ((mf.trail_at - back) % TRAIL + TRAIL) % TRAIL;
+            float dx = mf.trail[i].x - mf.x, dy = mf.trail[i].y - mf.y;
+            if (dx * dx + dy * dy < 4) continue;   /* (standing still: none) */
+            draw_mpose_as(cv, mf.trail[i].pose, base + (int)mf.trail[i].x, (int)mf.trail[i].y - MARIA_FEET,
+                          mf.trail[i].right, false, 60 + 40 * k);
+        }
+    bool dying = mf.phase == 2 && mf.state == M_DOWN;
+    if (dying) g_dissolve = mf.t < 60 ? 0 : mf.t >= FIN_GONE ? 17 : (mf.t - 60) * 17 / (FIN_GONE - 60);
+    if (dying || !(mf.inv && (mf.inv & 2) && !mf.flash))   /* (blinking while she cannot be hurt) */
+        draw_mpose(cv, mf.pose, base + (int)mf.x + mf.shake, (int)mf.y - MARIA_FEET, mf.right, mf.flash > 0);
+    g_dissolve = 0;
 }
 
 static void gauge_fill(const Canvas *cv, int gx, int gy)
 {
     static const uint32_t TUBE[4] = {0xFFB6B6DAu, 0xFFFFFFFFu, 0xFFDADAFFu, 0xFF9191B6u};
-    int h = mf.hp * 86 / MARIA_HP;
+    int full = mf.phase == 2 || mf.state == M_DOWN ? MARIA_HP2 : MARIA_HP;   /* (from the refill on: the second gauge) */
+    int h = (mf.hp > full ? full : mf.hp) * 86 / full;
     for (int ly = 94 - h; ly <= 94; ly++)
         for (int k = 0; k < 4; k++) plot(cv, gx + 24 + k, gy + ly, TUBE[k]);
 }
@@ -1428,6 +1916,33 @@ static bool fight_load(Pce *p)
         return false;
     memcpy(fs.torch, tb, 12 * 128);
     fs.have_thunder = disc_span(p, THUNDER_AT, THUNDER_LEN, fs.thunder) && crc32_of(fs.thunder, THUNDER_LEN) == THUNDER_CRC;
+    fs.have_yell = disc_span(p, MARIA_YELL_AT, MARIA_YELL_LEN, fs.yell) && crc32_of(fs.yell, MARIA_YELL_LEN) == MARIA_YELL_CRC;
+    {
+        uint8_t b[8 * 128 + ORB_FADES * ORB_FADE_STEP + 18 + 4 * 128], *f = b + 8 * 128, *o = f + ORB_FADES * ORB_FADE_STEP;
+        uint8_t dp[18];
+        fs.have_orb_art = disc_span(p, ORB_CELLS, 8 * 128, b) && disc_span(p, ORB_FADE, ORB_FADES * ORB_FADE_STEP, f) &&
+                          disc_span(p, ORB_PAL, 18, o) && disc_span(p, SPARK_CELLS, 4 * 128, o + 18) &&
+                          crc32_of(b, sizeof b) == ORB_ART_CRC && disc_span(p, DOVE_PAL, 18, dp);
+        if (fs.have_orb_art) {
+            memcpy(fs.orb_cells, b, sizeof fs.orb_cells);
+            memcpy(fs.spark_cells, o + 18, sizeof fs.spark_cells);
+            for (int k = 0; k < ORB_FADES; k++) unpack_pal(f + k * ORB_FADE_STEP, fs.orb_pal[k]);
+            unpack_pal(o, fs.orb_pal[ORB_FADES]);
+            unpack_pal(dp, fs.spark_pal[0]);
+        }
+    }
+    fs.have_death_cry = disc_span(p, DEATH_CRY_AT, DEATH_CRY_LEN, fs.death_cry) &&
+                        crc32_of(fs.death_cry, DEATH_CRY_LEN) == DEATH_CRY_CRC;
+    fs.have_death_yell = disc_span(p, MARIA_DEATH_AT, MARIA_DEATH_LEN, fs.death_yell) &&
+                         crc32_of(fs.death_yell, MARIA_DEATH_LEN) == MARIA_DEATH_CRC;
+    {
+        uint8_t st[128 + 18];
+        if (!disc_span(p, STONE_TILES, 64, st) || !disc_span(p, STONE_TILES + 0x200, 64, st + 64) ||
+            !disc_span(p, STONE_PAL, 18, st + 128) || crc32_of(st, sizeof st) != STONE_CRC)
+            return false;
+        memcpy(fs.stone, st, 128);
+        unpack_pal(st + 128, fs.stone_pal[0]);
+    }
     unpack_pal(tb + 12 * 128, fs.torch_pal[0]);
     unpack_pal(tb + 12 * 128 + 18, fs.torch_pal[1]);
     /* the title art that is the title's (its layout: the title's map) */
@@ -1534,7 +2049,117 @@ static void unlock_camera(Pce *p)
 }
 
 static void music_fight(Pce *p);
+static void music_track(Pce *p, int track);
 static void music_back(Pce *p);
+
+/* The ledges solid: the floor's map entry (the one under the arena's floor) written into the
+ * map's cells under them every frame (the game's columns, streamed as the camera moves, can
+ * draw over them), the cells' own put back when they go. */
+static void ledge_floor(Pce *p, bool on)
+{
+    Vdc *d = &p->vdc;
+    static const int map_w[4] = {32, 64, 128, 128};
+    int mw = map_w[(d->reg[9] >> 4) & 3], mh = (d->reg[9] & 0x40) ? 64 : 32;
+    if (!on) {
+        for (int i = 0; i < fs.n_bat; i++) d->vram[fs.bat_at[i]] = fs.bat_saved[i];
+        fs.n_bat = 0;
+        return;
+    }
+    const uint16_t *my = vdc_row_map_y();
+    int row_of[2];
+    int fr = (my[ARENA_FLOOR + 2] & (mh * 8 - 1)) >> 3, fc = ((ARENA_X0 + ARENA_W / 2) >> 3) & (mw - 1);
+    uint16_t floor_e = d->vram[fr * mw + fc];
+    bool first = fs.n_bat == 0;
+    if (!first) floor_e = d->vram[fs.bat_at[0]];   /* (as written the first time) */
+    int n = 0;
+    for (int l = 0; l < LEDGES; l++) {
+        for (int r = 0; r < 2; r++) row_of[r] = (my[ledge_top(l) + 8 * r] & (mh * 8 - 1)) >> 3;
+        for (int r = 0; r < 2; r++)
+            for (int c = 0; c < 2 * LEDGE_BLOCKS; c++) {
+                int at = row_of[r] * mw + (((ARENA_X0 + LEDGE_X[l] + 8 * c) >> 3) & (mw - 1));
+                if (first) fs.bat_at[n] = at, fs.bat_saved[n] = d->vram[at];
+                d->vram[at] = floor_e;
+                n++;
+            }
+    }
+    fs.n_bat = n;
+}
+
+/* The fight in save states: the host plays it, outside the game's memory, so a state saved
+ * in it came back to the card game (with the camera where the arena had it: the room's own
+ * wall stood mid-picture, the floor drawn on past it). Each frame of the arena a snapshot of
+ * it is kept in free space of the area's room bank ($FF there, $9D25 on), which a save state
+ * holds; a state loaded with one goes straight back into the arena. */
+#define FIGHT_SAVE 0x9D80
+#define FIGHT_SAVE_END 0x9E00
+typedef struct {
+    char magic[4];             /* "RFGT" */
+    uint8_t version, phase, mstate, pose, right, second, fall, throws;
+    int16_t t, mt, hp, inv, flash, dove_wait, flinch_wait, walk_for, dir;
+    float x, y, vx, vy;
+    int16_t strike_in, dim, ledge_a;
+    uint8_t music_ours, music_repeat, music_playing, pad;
+    int32_t music_start, music_end;
+    int64_t music_pos;
+} FightSave;
+_Static_assert(sizeof(FightSave) <= FIGHT_SAVE_END - FIGHT_SAVE, "the fight's snapshot fits its space");
+
+static void fight_save(Pce *p)
+{
+    uint8_t *m = at(p, B_ROOMS, FIGHT_SAVE);
+    if (!m) return;
+    if (fs.state == FIGHT_WON) {   /* (won: kept so, the tombstones stay; "RFGW") */
+        memset(m, 0xFF, FIGHT_SAVE_END - FIGHT_SAVE);
+        memcpy(m, "RFGW", 4);
+        return;
+    }
+    if (fs.state != FIGHT_ARENA) {
+        if (!memcmp(m, "RFGT", 4)) memset(m, 0xFF, FIGHT_SAVE_END - FIGHT_SAVE);
+        return;
+    }
+    FightSave f;
+    memset(&f, 0, sizeof f);
+    memcpy(f.magic, "RFGT", 4);
+    f.version = 1;
+    f.phase = (uint8_t)mf.phase, f.mstate = (uint8_t)mf.state, f.pose = (uint8_t)mf.pose;
+    f.right = mf.right, f.second = mf.second, f.fall = mf.fall, f.throws = (uint8_t)mf.throws;
+    f.t = (int16_t)fs.t, f.mt = (int16_t)mf.t, f.hp = (int16_t)mf.hp, f.inv = (int16_t)mf.inv, f.flash = (int16_t)mf.flash;
+    f.dove_wait = (int16_t)mf.dove_wait, f.flinch_wait = (int16_t)mf.flinch_wait, f.walk_for = (int16_t)mf.walk_for;
+    f.dir = (int16_t)mf.dir;
+    f.x = mf.x, f.y = mf.y, f.vx = mf.vx, f.vy = mf.vy;
+    f.strike_in = (int16_t)(fs.next_strike - fs.t);
+    f.dim = (int16_t)fs.dim, f.ledge_a = (int16_t)fs.ledge_a;
+    f.music_ours = fs.music_ours, f.music_repeat = fs.music_repeat, f.music_playing = fs.music_playing;
+    f.music_start = fs.music_start, f.music_end = fs.music_end, f.music_pos = fs.music_pos;
+    memcpy(m, &f, sizeof f);
+}
+
+/* (a state loaded in the arena: the fight as it was) */
+static bool fight_resume(Pce *p)
+{
+    const uint8_t *m = at(p, B_ROOMS, FIGHT_SAVE);
+    FightSave f;
+    if (!m || memcmp(m, "RFGT", 4)) return false;
+    memcpy(&f, m, sizeof f);
+    if (f.version != 1 || !fight_load(p)) return false;
+    fs.state = FIGHT_ARENA;
+    fs.t = f.t;
+    maria_reset();
+    mf.phase = f.phase, mf.state = f.mstate, mf.pose = f.pose;
+    mf.right = f.right, mf.second = f.second, mf.fall = f.fall, mf.throws = f.throws;
+    mf.t = f.mt, mf.hp = f.hp, mf.inv = f.inv, mf.flash = f.flash;
+    mf.dove_wait = f.dove_wait, mf.flinch_wait = f.flinch_wait, mf.walk_for = f.walk_for, mf.dir = f.dir;
+    mf.x = f.x, mf.y = f.y, mf.vx = f.vx, mf.vy = f.vy;
+    fs.strike_at = -1000;
+    fs.strike_maria = false;
+    fs.next_strike = fs.t + (f.strike_in > 0 ? f.strike_in : 120);
+    fs.dim = f.dim, fs.ledge_a = f.ledge_a;
+    fs.n_bat = 0;
+    fs.finale_t = -1;
+    fs.music_ours = f.music_ours, fs.music_repeat = f.music_repeat, fs.music_playing = f.music_playing;
+    fs.music_start = f.music_start, fs.music_end = f.music_end, fs.music_pos = f.music_pos;
+    return true;
+}
 
 /* before a frame */
 static void fight_frame(Pce *p)
@@ -1542,8 +2167,15 @@ static void fight_frame(Pce *p)
     if (!in_hidden(p)) {
         if (fs.state != FIGHT_NONE) music_back(p);
         fs.state = FIGHT_NONE;
+        grave_reset();
+        fight_save(p);
         return;
     }
+    if (fs.state == FIGHT_NONE) {   /* (won before: the tombstones, no card game) */
+        const uint8_t *m = at(p, B_ROOMS, FIGHT_SAVE);
+        if (m && !memcmp(m, "RFGW", 4)) fs.state = FIGHT_WON, fs.won_t = WON_FADE;
+    }
+    if (fs.state == FIGHT_NONE && p->wram[LIMIT_LEFT_PAGE] == 3 && fight_resume(p)) return;
     if (fs.state == FIGHT_NONE) {
         if (p->wram[LIMIT_LEFT_PAGE] == 3) {   /* (a state loaded mid-fight): the room's own limits */
             p->wram[LIMIT_LEFT_PAGE] = 2;
@@ -1562,9 +2194,17 @@ static void fight_frame(Pce *p)
     } else if (fs.state == FIGHT_FADE && fs.t >= FADE_T) {
         fs.state = FIGHT_ARENA, fs.t = 0;
         maria_reset();
+        fs.dim = fs.ledge_a = 0;
+        fs.strike_maria = false;
+        fs.finale_t = -1;
         music_fight(p);
         fs.strike_at = -1000;
         fs.next_strike = 120 + rnd(120);   /* (the first soon after the arena comes in) */
+    }
+    if (fs.state == FIGHT_WON) {   /* (back in the room: it fades in; Death's grave) */
+        if (fs.won_t < WON_FADE) fs.won_t++;
+        grave_step(p);
+        return;
     }
     if (fs.state >= FIGHT_FADE && cam_page(p) == 3) p->wram[LIMIT_LEFT_PAGE] = 3;
     if (fs.state == FIGHT_ARENA) {
@@ -1574,18 +2214,421 @@ static void fight_frame(Pce *p)
             fs.next_strike = fs.t + 420 + rnd(481);   /* (7-15 s on) */
             fs.strike_dx = rnd(200) - 120;
             fs.strike_flip = rnd(2);
+            fs.strike_maria = false;
         }
         if (fs.t == fs.strike_at + THUNDER_DELAY && fs.have_thunder)
             sound_extra_play_at(fs.thunder, THUNDER_LEN, 8, THUNDER_VOLUME, THUNDER_SOFTEN);
     }
+    if (fs.state == FIGHT_ARENA && fs.finale_t >= 0) {
+        fs.finale_t++;
+        if (fs.finale_t == FIN_ECHO && fs.have_death_yell)
+            sound_extra_play_at(fs.death_yell, MARIA_DEATH_LEN, MARIA_DEATH_RATE, 130, 90);   /* (its echo) */
+        orbs_step(p);
+        fs.next_strike = fs.t + 600;   /* (no more lightning) */
+        if (fs.finale_t >= FIN_END) {
+            /* back to the room: its own limits and camera, the stage's music; won */
+            ledge_floor(p, false);
+            fs.state = FIGHT_WON;
+            fs.won_t = 0;
+            fs.dim = fs.ledge_a = 0;
+            fs.finale_t = -1;
+            p->wram[LIMIT_LEFT_PAGE] = 2;
+            p->wram[0x1EC6] = 3;
+            p->wram[0x1EC7] = 0;
+            unlock_camera(p);
+            music_back(p);
+            fight_save(p);
+            return;
+        }
+    }
+    ledge_floor(p, fs.state == FIGHT_ARENA && fs.ledge_a >= 256);
+    fight_save(p);
 }
 
 /* the arena's pixel at its x, y */
+/* moonlit: darker and cooled to the night sky's blue (the second phase's wall and ground) */
+static uint32_t moonlit(uint32_t c)
+{
+    int r = (int)(c >> 16 & 255), g = (int)(c >> 8 & 255), b = (int)(c & 255);
+    int mr = r * 35 / 100, mg = g * 42 / 100, mb = b * 60 / 100 + 30;
+    if (mb > 255) mb = 255;
+    return 0xFF000000u | (uint32_t)mr << 16 | (uint32_t)mg << 8 | (uint32_t)mb;
+}
+static uint32_t mix(uint32_t a, uint32_t b, int t)   /* (t 0-256: a to b) */
+{
+    uint32_t o = 0xFF000000u;
+    for (int sh = 0; sh < 24; sh += 8) o |= (uint32_t)((int)(a >> sh & 255) + (((int)(b >> sh & 255) - (int)(a >> sh & 255)) * t >> 8)) << sh;
+    return o;
+}
+
 static uint32_t arena_px(int ax, int y, bool flash)
 {
     if (ax < 0) ax = 0;
     if (ax >= ARENA_W) ax = ARENA_W - 1;
-    return fs.sky[flash][y * ARENA_W + ax];
+    uint32_t c = fs.sky[flash][y * ARENA_W + ax];
+    if (fs.dim && (fs.solid[y * ARENA_W + ax] || y >= WALL_TOP + 13)) c = mix(c, moonlit(c), fs.dim);
+    return c;
+}
+
+/* the ledges: their blocks (from the second phase's start, dithered in as `ledge_a` grows) */
+static void draw_ledges(const Canvas *cv, int base)
+{
+    if (!fs.ledge_a) return;
+    int dis = 16 - fs.ledge_a * 16 / 256;   /* (how much of each block is left out) */
+    for (int l = 0; l < LEDGES; l++)
+        for (int b = 0; b < LEDGE_BLOCKS; b++)
+            for (int y = 0; y < 16; y++)
+                for (int x = 0; x < 16; x++) {
+                    int q = (y >> 3) * 2 + (x >> 3);
+                    uint16_t tw[16];
+                    for (int i = 0; i < 16; i++) tw[i] = (uint16_t)(fs.stone[q * 32 + i * 2] | fs.stone[q * 32 + i * 2 + 1] << 8);
+                    int c = tile_px(tw, x & 7, y & 7);
+                    int px = base + LEDGE_X[l] + 16 * b + x, py = ledge_top(l) + y;
+                    if (DITHER[py & 3][px & 3] < dis) continue;
+                    uint32_t col = fs.stone_pal[0][c];   /* (0 too: the mortar, dark) */
+                    if (fs.ledge_a < 256 && ((fs.t >> 1) & 1)) col = mix(col, 0xFFFFFFFFu, 140);   /* (flickering in) */
+                    plot(cv, px, py, col);
+                }
+}
+
+/* a red orb (a beaten boss's, drawn by the host): a shiny sphere, a glint now and then */
+static void draw_orb(const Canvas *cv, int cx, int cy, int age)
+{
+    for (int y = -5; y <= 5; y++)
+        for (int x = -5; x <= 5; x++) {
+            int d2 = x * x + y * y;
+            if (d2 > 26) continue;
+            int lx = x + 2, ly = y + 2, l2 = lx * lx + ly * ly;   /* (lit from the top left) */
+            uint32_t c = d2 > 18 ? 0xFF6E000Au : l2 < 3 ? 0xFFFFD2D2u : l2 < 8 ? 0xFFFF5A50u : 0xFFC8141Eu;
+            plot(cv, cx + x, cy + y, c);
+        }
+    if ((age / 6) % 5 == 0) {   /* (a glint) */
+        plot(cv, cx + 4, cy - 6, 0xFFFFFFC8u);
+        plot(cv, cx + 3, cy - 6, 0xFFFFE680u), plot(cv, cx + 5, cy - 6, 0xFFFFE680u);
+        plot(cv, cx + 4, cy - 7, 0xFFFFE680u), plot(cv, cx + 4, cy - 5, 0xFFFFE680u);
+    }
+}
+
+/* the game's orb at its middle cx, cy (age: frames since it appeared) */
+static void draw_game_orb(const Canvas *cv, int cx, int cy, int age, int spark)
+{
+    if (age < ORB_WHITE_T) {   /* (white, shimmering, fading to red) */
+        static const uint16_t FL[4] = {0x0000, 0x0800, 0x8000, 0x8800};
+        Piece pc = {0, 0, 0x140, FL[(age / 2) & 3]};
+        uint32_t (*pal)[16] = &fs.orb_pal[age * ORB_FADES / ORB_WHITE_T];
+        draw_frame(cv, &pc, 1, fs.orb_cells, 0x140, 0xFFFF, NULL, pal, cx - 8, cy - 8, 16, false, false);
+        return;
+    }
+    /* (red, the fireball turning in it: behind the orb) */
+    int f = ((age - ORB_WHITE_T) / 4) % 6;
+    Piece pc[2] = {{0, 0, 0x141, 0x0000}, {0, 0, (uint16_t)(0x142 + f), (uint16_t)(((age / 24) & 1) ? 0x0800 : 0)}};
+    draw_frame(cv, pc, 2, fs.orb_cells, 0x140, 0xFFFF, NULL, &fs.orb_pal[ORB_FADES], cx - 8, cy - 8, 16, false, false);
+    if (spark >= 0 && spark < 16) {   /* (a sparkle by it) */
+        Piece sp = {0, 0, (uint16_t)(0x1F3 + spark / 4), 0x0000};
+        int sx = cx - 8 + ((age * 7) % 11) - 5, sy = cy - 14 + ((age * 5) % 7);
+        draw_frame(cv, &sp, 1, fs.spark_cells, 0x1F3, 0xFFFF, NULL, fs.spark_pal, sx, sy, 16, false, false);
+    }
+}
+
+/* the orbs: falling, bouncing off the floor, the ledges and the arena's sides; Richter gathers
+ * them (rx, ry his feet) */
+static void orbs_step(Pce *p)
+{
+    float rx, ry;
+    richter_at(p, &rx, &ry);
+    int t = fs.finale_t;
+    if (t >= FIN_RAIN0 && t < FIN_RAIN1 && t % 3 == 0)
+        for (int i = 0; i < ORBS; i++)
+            if (!fs.orb[i].on) {
+                fs.orb[i].on = true;
+                fs.orb[i].age = 0;
+                fs.orb[i].x = (float)(12 + rnd(ARENA_W - 24));
+                fs.orb[i].y = -8.0f - (float)rnd(30);
+                fs.orb[i].vx = (float)(rnd(41) - 20) / 20.0f;
+                fs.orb[i].vy = 1.0f + (float)rnd(10) / 10.0f;
+                fs.orb[i].spark = -1;
+                break;
+            }
+    for (int i = 0; i < ORBS; i++) {
+        if (!fs.orb[i].on) continue;
+        float was = fs.orb[i].y;
+        fs.orb[i].age++;
+        fs.orb[i].x += fs.orb[i].vx;
+        fs.orb[i].y += fs.orb[i].vy;
+        fs.orb[i].vy += 0.18f;
+        float g = ground_at(fs.orb[i].x, was + 5) - 5;
+        if (fs.orb[i].vy > 0 && fs.orb[i].y >= g) {
+            fs.orb[i].y = g;
+            fs.orb[i].vy = -fs.orb[i].vy * 0.62f;
+            fs.orb[i].vx *= 0.85f;
+            if (fs.orb[i].vy > -0.9f) fs.orb[i].vy = 0;
+        }
+        if (fs.orb[i].x < 6) fs.orb[i].x = 6, fs.orb[i].vx = -fs.orb[i].vx;
+        if (fs.orb[i].x > ARENA_W - 6) fs.orb[i].x = ARENA_W - 6, fs.orb[i].vx = -fs.orb[i].vx;
+        /* (a sparkle now and then) */
+        if (fs.orb[i].spark >= 0 && ++fs.orb[i].spark >= 16) fs.orb[i].spark = -1;
+        if (fs.orb[i].spark < 0 && fs.orb[i].age > ORB_WHITE_T && !rnd(40)) fs.orb[i].spark = 0;
+        /* (gathered: Richter touching it) */
+        if (fs.finale_t < FIN_FADE && overlap(rx - 9, ry - 46, rx + 9, ry, fs.orb[i].x - 6, fs.orb[i].y - 6, fs.orb[i].x + 6, fs.orb[i].y + 6)) {
+            fs.orb[i].on = false;
+            fs.gathered++;
+            sfx_request(PICKUP_SFX);
+        }
+    }
+}
+
+/* black over the whole picture, `a` 0-256 */
+static void darken_all(const Canvas *cv, int a)
+{
+    if (a <= 0) return;
+    for (int y = 0; y < cv->h; y++)
+        for (int x = 0; x < cv->w; x++) {
+            uint32_t *px = &cv->fb[y * PCE_FB_MAX_W + x];
+            *px = a >= 256 ? 0xFF000000u : mix(*px, 0xFF000000u, a);
+        }
+}
+
+/* the tombstone where Death was struck down (the host's own drawing): a rounded grey stone,
+ * a cross cut in it, on a step; x the middle, `bottom` the floor */
+static void draw_tombstone(const Canvas *cv, int x, int bottom)
+{
+    static const uint32_t L = 0xFFB4B4BEu, M = 0xFF8C8C96u, D = 0xFF5A5A64u, K = 0xFF323238u;
+    for (int y = 0; y < 26; y++)
+        for (int dx = -9; dx <= 9; dx++) {
+            int yy = bottom - 26 + y;
+            if (y >= 22) {   /* (the step) */
+                plot(cv, x + dx, yy, y == 22 ? L : y == 25 ? K : M);
+                continue;
+            }
+            if (dx < -7 || dx > 7) continue;
+            if (y < 6) {   /* (the rounded top) */
+                int ry = 6 - y;
+                if (dx * dx + ry * ry * 2 > 56) continue;
+            }
+            uint32_t c = dx <= -6 ? L : dx >= 6 ? D : M;
+            if (y < 2 && dx > -5 && dx < 3) c = L;
+            /* (the cross) */
+            if ((dx >= -1 && dx <= 0 && y >= 4 && y <= 17) || (y >= 7 && y <= 8 && dx >= -4 && dx <= 3)) c = K;
+            plot(cv, x + dx, yy, c);
+        }
+}
+
+/* Death's grave, once the fight is won: the cemetery's tombstone that comes for you (Stage 3),
+ * the game's own sprite from the disc (its cells $120-$12F and palette, stage data at $5EF800
+ * and $5F92F6). It stands where he fell until Richter comes near, then shakes, rises, leans
+ * over and dives at him, three times, and flies back to its place. Its touch hurts; four
+ * strikes of the whip break it, and after a while it stands there again. Maria's stands still. */
+#define GRAVE_CELLS 0x5EF800
+#define GRAVE_PAL 0x5F92F6
+#define GRAVE_CRC 0xFBF38593u
+#define GRAVE_HP 4
+#define GRAVE_W 32
+#define GRAVE_H 48
+enum { G_OFF, G_REST, G_WAKE, G_RISE, G_AIM, G_DIVE, G_HOME, G_BREAK, G_GONE };
+/* its poses (cells from $120; the frame's top left; facing right: leaning to the right) */
+static const Piece GRAVE_POSE[3][2] = {
+    {{8, 0, 0x12C, 0x1080}, {0, 32, 0x120, 0x0180}},   /* upright */
+    {{8, 0, 0x122, 0x0080}, {0, 16, 0x124, 0x1180}},   /* leaning */
+    {{16, 0, 0x123, 0x0080}, {0, 16, 0x128, 0x1180}},  /* leaning far */
+};
+static struct {
+    int loaded;                /* 0 not yet, 1 read from the disc, -1 not there */
+    uint8_t cells[16 * 128];
+    uint32_t pal[1][16];
+    int state, t, hp, inv, flash, dives, pose, rest_for;
+    float x, y, vx, vy;        /* room X of its middle, Y of its bottom */
+    bool right;
+} gv;
+
+static float grave_home(void) { return (float)(DEATH_X + DEATH_W / 2); }
+
+static bool grave_load(Pce *p)
+{
+    if (gv.loaded) return gv.loaded > 0;
+    uint8_t b[16 * 128 + 18];
+    gv.loaded = disc_span(p, GRAVE_CELLS, 16 * 128, b) && disc_span(p, GRAVE_PAL, 18, b + 16 * 128) &&
+                        crc32_of(b, sizeof b) == GRAVE_CRC ? 1 : -1;
+    if (gv.loaded > 0) {
+        memcpy(gv.cells, b, sizeof gv.cells);
+        unpack_pal(b + 16 * 128, gv.pal[0]);
+    }
+    return gv.loaded > 0;
+}
+
+static void grave_reset(void) { gv.state = G_OFF; }
+
+/* a grave's frame: x its middle, bottom on screen */
+static void grave_draw_at(const Canvas *cv, int pose, int x, int bottom, bool right, bool white)
+{
+    draw_frame(cv, GRAVE_POSE[pose], 2, gv.cells, 0x120, 0xFFFF, NULL, gv.pal, x - GRAVE_W / 2, bottom - GRAVE_H, GRAVE_W,
+               !right, white);
+}
+
+/* before a frame, in the room once the fight is won */
+static void grave_step(Pce *p)
+{
+    if (!grave_load(p)) return;
+    float floor = (float)ROOM_FLOOR;
+    if (gv.state == G_OFF) {
+        gv.t = gv.hp = gv.inv = gv.flash = gv.dives = gv.pose = 0, gv.vx = gv.vy = 0;
+        gv.state = G_REST;
+        gv.x = grave_home(), gv.y = floor;
+        gv.rest_for = 90;
+        gv.right = false;
+    }
+    int cam = scene_cam(p);
+    int sx = (int16_t)(p->wram[W_PX_HI] << 8 | p->wram[W_PX]), sy = (int16_t)(p->wram[W_PY_HI] << 8 | p->wram[W_PY]);
+    float rx = (float)(sx + cam), ry = (float)(sy + MARIA_FEET);   /* (Richter in the room: his feet) */
+    gv.t++;
+    if (gv.inv) gv.inv--;
+    if (gv.flash) gv.flash--;
+    bool live = gv.state >= G_WAKE && gv.state <= G_HOME;
+    switch (gv.state) {
+    case G_REST:
+        gv.pose = 0;
+        if (gv.rest_for) gv.rest_for--;
+        else if (fs.won_t >= WON_FADE && fabsf(rx - gv.x) < 160) gv.state = G_WAKE, gv.t = 0, gv.dives = 0, gv.hp = GRAVE_HP;
+        break;
+    case G_WAKE:   /* (shaking where it stands) */
+        if (gv.t >= 36) gv.state = G_RISE, gv.t = 0, gv.vy = -3.0f;
+        break;
+    case G_RISE:   /* (up out of the ground, drifting toward him) */
+        gv.right = rx > gv.x;
+        gv.pose = 0;
+        gv.vx = (rx > gv.x ? 0.6f : -0.6f);
+        gv.vy += 0.1f;
+        if (gv.vy >= 0 || gv.y < floor - 100) gv.vy = 0, gv.state = G_AIM, gv.t = 0;
+        break;
+    case G_AIM:    /* (leaning over toward him, hovering) */
+        gv.right = rx > gv.x;
+        gv.vx *= 0.9f;
+        gv.vy = sinf(gv.t * 0.3f) * 0.4f;
+        gv.pose = gv.t < 10 ? 1 : 2;
+        if (gv.t >= 24) {
+            float dx = rx - gv.x, dy = (ry - 16) - (gv.y - GRAVE_H / 2), d = sqrtf(dx * dx + dy * dy);
+            if (d < 1) d = 1;
+            gv.vx = dx / d * 3.4f, gv.vy = dy / d * 3.4f;
+            if (gv.vy < 0.6f) gv.vy = 0.6f;
+            gv.state = G_DIVE, gv.t = 0;
+        }
+        break;
+    case G_DIVE:
+        gv.pose = 1;
+        if (gv.y >= floor || gv.t > 70) {   /* (into the ground; up again, or home) */
+            gv.y = floor < gv.y ? floor : gv.y;
+            gv.dives++;
+            gv.state = gv.dives >= 3 ? G_HOME : G_RISE;
+            gv.t = 0, gv.vx = 0, gv.vy = -3.0f;
+        }
+        break;
+    case G_HOME: { /* (back over its place, and down onto it) */
+        gv.pose = 0;
+        float hx = grave_home(), dx = hx - gv.x;
+        gv.right = dx > 0;
+        gv.vx = fabsf(dx) < 2 ? dx : (dx > 0 ? 1.6f : -1.6f);
+        if (gv.y > floor - 60 && fabsf(dx) > 4) gv.vy = -1.2f;
+        else if (fabsf(dx) <= 4) gv.vy = 1.4f;
+        else gv.vy = 0;
+        if (fabsf(dx) <= 4 && gv.y >= floor) {
+            gv.x = hx, gv.y = floor, gv.vx = gv.vy = 0;
+            gv.state = G_REST, gv.rest_for = 180, gv.right = false;
+        }
+        break;
+    }
+    case G_BREAK:  /* (struck down: it shakes and comes apart) */
+        if (gv.t >= 40) gv.state = G_GONE, gv.t = 0;
+        break;
+    case G_GONE:   /* (and after a while it stands in its place again) */
+        if (gv.t >= 300) {
+            gv.state = G_REST, gv.t = 0, gv.rest_for = 180;
+            gv.x = grave_home(), gv.y = floor, gv.vx = gv.vy = 0, gv.right = false, gv.pose = 0;
+        }
+        break;
+    }
+    if (gv.state == G_RISE || gv.state == G_AIM || gv.state == G_DIVE || gv.state == G_HOME) {
+        gv.x += gv.vx, gv.y += gv.vy;
+        if (gv.x < 24) gv.x = 24;
+        if (gv.x > 488) gv.x = 488;
+        if (gv.y > floor) gv.y = floor;
+    }
+    if (!live) return;
+    /* its touch: Richter hurt */
+    if (overlap(rx - 7, ry - 44, rx + 7, ry, gv.x - 13, gv.y - 44, gv.x + 13, gv.y - 2)) hurt_richter(p, 6, gv.x);
+    /* the whip on it (as on Death: its box while it strikes) */
+    if (gv.inv) return;
+    for (int sl = 1; sl < 16; sl++) {
+        if (!p->wram[0x0A10 + sl] || p->wram[0x1828 + sl] != 5) continue;
+        int fr = p->wram[0x0A68 + sl];
+        if (fr < 5 || fr > 7) continue;
+        int ox = (int16_t)(p->wram[W_PX_HI + sl] << 8 | p->wram[W_PX + sl]);
+        int oy = (int16_t)(p->wram[W_PY_HI + sl] << 8 | p->wram[W_PY + sl]);
+        int ahead = (int8_t)p->wram[0x1930 + sl], hw = p->wram[0x1988 + sl];
+        int below = (int8_t)p->wram[0x19E0 + sl], hh = p->wram[0x1A38 + sl];
+        float cx = (float)(ox + (p->wram[0x0AC0] ? -ahead : ahead) + cam), cy = (float)(oy + below);
+        if (overlap(cx - hw, cy - hh, cx + hw, cy + hh, gv.x - 14, gv.y - 46, gv.x + 14, gv.y)) {
+            gv.flash = 8, gv.inv = 20;
+            if (--gv.hp <= 0) {
+                gv.state = G_BREAK, gv.t = 0;
+            } else if (gv.state == G_DIVE || gv.state == G_AIM) {   /* (knocked back up) */
+                gv.state = G_RISE, gv.t = 0, gv.vy = -2.5f;
+                gv.x += rx < gv.x ? 8 : -8;
+            }
+            return;
+        }
+    }
+}
+
+/* the graves, drawn in the room (screen: cam the room's camera); host-drawn if the disc's are not there */
+static void draw_graves(const Canvas *cv, int cam, int maria_x)
+{
+    if (gv.loaded <= 0) {
+        draw_tombstone(cv, (int)grave_home() - cam, ROOM_FLOOR);
+        draw_tombstone(cv, maria_x, ROOM_FLOOR);
+        return;
+    }
+    grave_draw_at(cv, 0, maria_x, ROOM_FLOOR, false, false);
+    if (gv.state == G_GONE) return;
+    if (gv.state == G_OFF) {
+        grave_draw_at(cv, 0, (int)grave_home() - cam, ROOM_FLOOR, false, false);
+        return;
+    }
+    int x = (int)lroundf(gv.x) - cam, y = (int)lroundf(gv.y);
+    if (gv.state == G_WAKE || gv.state == G_BREAK) x += (gv.t >> 1) & 1 ? 1 : -1;
+    if (gv.state == G_BREAK) g_dissolve = gv.t < 10 ? 0 : (gv.t - 10) * 17 / 30;
+    if (gv.state == G_REST && gv.rest_for > 120 && gv.t < 60) g_dissolve = 16 - gv.t * 16 / 60;   /* (back in its place) */
+    grave_draw_at(cv, gv.pose, x, y, gv.right, gv.flash > 0 && (gv.flash & 2));
+    g_dissolve = 0;
+}
+
+/* the strike's burst: a white glow swelling out from her and fading (lt: frames since) */
+static void draw_burst(const Canvas *cv, int base, int lt)
+{
+    int cx = base + (int)mf.x, cy = (int)mf.y - 22;
+    int r = 12 + lt * 4, a = 235 * (STRIKE_HOLD - lt) / STRIKE_HOLD;
+    for (int y = cy - r; y <= cy + r; y++)
+        for (int x = cx - r; x <= cx + r; x++) {
+            int dx = x - cx, dy = y - cy, d2 = dx * dx + dy * dy;
+            if (d2 > r * r) continue;
+            /* (bright at the middle, and a brighter rim as it swells) */
+            int in = 256 - d2 * 256 / (r * r), rim = d2 * 256 / (r * r) > 200 ? 120 : 0;
+            int w = a * (in + rim) / 256;
+            if (w > 0) blend(cv, x, y, 0xFFFFFFu, w > 255 ? 255 : w);
+        }
+}
+
+/* the bolt that strikes Maria: a jagged line from the top of the sky down to her */
+static void draw_maria_bolt(const Canvas *cv, int base)
+{
+    static const uint32_t C[3] = {0xFF7850FFu, 0xFFC8C8FFu, 0xFFFFFFFFu};
+    for (int w = 2; w >= 0; w--)
+        for (int i = 0; i + 1 < fs.n_bolt_pts; i++) {
+            int x0 = fs.bolt_pts[i][0], y0 = fs.bolt_pts[i][1], x1 = fs.bolt_pts[i + 1][0], y1 = fs.bolt_pts[i + 1][1];
+            int n = (y1 - y0) > 0 ? y1 - y0 : 1;
+            for (int k = 0; k <= n; k++) {
+                int x = x0 + (x1 - x0) * k / n, y = y0 + (y1 - y0) * k / n;
+                for (int d = -w; d <= w; d++) plot(cv, base + x + d, y, C[2 - w]);
+            }
+        }
 }
 
 /* the arena over the picture, behind the game's sprites; `a` 0-256: how much of it */
@@ -1611,10 +2654,15 @@ static void draw_arena(const Canvas *cv, int a, bool flash, int fb0)
 /* the torches, at their places in the arena (its x 0 at screen x `base`) */
 static void draw_torches(const Canvas *cv, int base, uint64_t frame)
 {
+    /* (the stand moonlit with the wall in the second phase; the flame, a light, as it is) */
+    for (int c = 0; c < 16; c++) {
+        fs.torch_dim[0][c] = fs.torch_pal[0][c];
+        fs.torch_dim[1][c] = fs.dim ? mix(fs.torch_pal[1][c], moonlit(fs.torch_pal[1][c]), fs.dim) : fs.torch_pal[1][c];
+    }
     for (int i = 0; i < 2; i++) {
         Piece stand = {0, 16, 0xB0, 0x1001}, flame = {0, 0, FLAME_CELLS[(frame / 5) % 4], 0x0000};
         int x = base + TORCH_ARENA_X[i], y = ARENA_FLOOR - 48;
-        draw_frame(cv, &stand, 1, fs.torch, 0xB0, 0xFFFF, NULL, fs.torch_pal, x, y, 16, false, false);
+        draw_frame(cv, &stand, 1, fs.torch, 0xB0, 0xFFFF, NULL, fs.torch_dim, x, y, 16, false, false);
         draw_frame(cv, &flame, 1, fs.torch, 0xB0, 0xFFFF, NULL, fs.torch_pal, x, y, 16, false, false);
     }
 }
@@ -1673,9 +2721,9 @@ static void music_fade_out(Pce *p)
     }
     p->cdda.fade_step = -3;   /* (as the game's CD_FADE $0C: about 2.5 s) */
 }
-static void music_fight(Pce *p)
+static void music_track(Pce *p, int track)
 {
-    const DiscTrack *t = disc_track(&p->disc, FIGHT_TRACK);
+    const DiscTrack *t = disc_track(&p->disc, track);
     if (!t || t->data) return;
     p->cdda.start_lba = t->lba;
     p->cdda.end_lba = t->lba + t->sectors;
@@ -1685,6 +2733,7 @@ static void music_fight(Pce *p)
     p->cdda.volume = 256;
     p->cdda.fade_step = 0;
 }
+static void music_fight(Pce *p) { music_track(p, FIGHT_TRACK); }
 static void music_back(Pce *p)
 {
     if (!fs.music_ours) return;
@@ -1694,12 +2743,20 @@ static void music_back(Pce *p)
     p->cdda.fade_step = 0;
     fs.music_ours = false;
 }
-static void fight_reset(void) { fs.state = FIGHT_NONE; fs.music_ours = false; }
+static void fight_reset(void)
+{
+    fs.state = FIGHT_NONE;
+    fs.music_ours = false;
+    fs.dim = fs.ledge_a = 0;
+    fs.finale_t = -1;
+    fs.n_bat = 0;   /* (a state loaded, or the room left: its map is drawn afresh) */
+}
 static void fight_start(Pce *p)
 {
     if (fs.state == FIGHT_NONE && fight_load(p)) {
         fs.state = FIGHT_DYING, fs.t = 0;
         music_fade_out(p);
+        if (fs.have_death_cry) sound_extra_play_at(fs.death_cry, DEATH_CRY_LEN, DEATH_CRY_RATE, 256, 0);
         memset(fs.drop, 0, sizeof fs.drop);
     }
 }
@@ -1724,12 +2781,25 @@ void secret_after_frame(Pce *p)
     if (fs.state == FIGHT_ARENA) {
         int base = fb0 - cv.org;   /* (the arena's x 0 on the screen) */
         draw_arena(&cv, 256, flash, fb0);
-        if (lt >= 0 && lt <= 2)   /* (the bolt, its place and side each strike's own) */
+        if (lt >= 0 && lt <= 2 && !fs.strike_maria)   /* (the bolt, its place and side each strike's own) */
             draw_frame(&cv, BOLT, 6, fs.bolt, 0x199, 0xFFFF, NULL, fs.bolt_pal, base + TITLEART_SIDE + fs.strike_dx,
                        -SKY_LIFT, 224, fs.strike_flip, false);
         draw_torches(&cv, base, p->frame);
+        draw_ledges(&cv, base);
         mf.org = cv.org, mf.fb0 = fb0;
         maria_draw(&cv, base);
+        if (fs.finale_t >= 0) {
+            for (int i = 0; i < ORBS; i++)
+                if (fs.orb[i].on) {
+                    if (fs.have_orb_art) draw_game_orb(&cv, base + (int)fs.orb[i].x, (int)fs.orb[i].y, fs.orb[i].age, fs.orb[i].spark);
+                    else draw_orb(&cv, base + (int)fs.orb[i].x, (int)fs.orb[i].y, fs.orb[i].age);
+                }
+            if (fs.finale_t >= FIN_FADE) darken_all(&cv, (fs.finale_t - FIN_FADE) * 256 / (FIN_END - FIN_FADE));
+        }
+        if (fs.strike_maria && lt >= 0 && lt < STRIKE_HOLD) {
+            draw_burst(&cv, base, lt);
+            if (!(lt & 2)) draw_maria_bolt(&cv, base);   /* (flickering) */
+        }
         draw_frame(&cv, GAUGE, 3, fs.gauge, 0x1F8, 0xFFFF, NULL, fs.gauge_pal, base + GAUGE_ARENA_X, 16, 32, false, false);
         gauge_fill(&cv, base + GAUGE_ARENA_X, 16);
         return;
@@ -1760,7 +2830,7 @@ void secret_after_frame(Pce *p)
     if (p->frame != sc.last_frame) {
         sc.last_frame = p->frame;
         if (fs.state == FIGHT_NONE) cards_step(hand_x, hand_y);
-        else blood_step(dx + DEATH_W / 2, dy + DEATH_H / 2);
+        else if (fs.state != FIGHT_WON) blood_step(dx + DEATH_W / 2, dy + DEATH_H / 2);
     }
     /* the deck and the cards played */
     for (int i = 0; i < (sc.deck > 4 ? 3 : sc.deck > 0 ? sc.deck < 3 ? sc.deck : 2 : 0); i++)
@@ -1777,9 +2847,13 @@ void secret_after_frame(Pce *p)
                    dx + (t < 70 ? ((t >> 1) & 1 ? 2 : -2) : 0), dy, DEATH_W, false, t < 48 && !((t >> 2) & 1));
         g_dissolve = 0;
     }
-    /* Maria, facing him, her hand of cards up */
-    draw_frame(&cv, MARIA, 2, sc.maria, 0x184, 0xFFFF, NULL, sc.maria_pal, mx, my, MARIA_W, true, false);
-    for (int i = 0; i < sc.hand[1] && i < 4; i++) card(&cv, mx - 2 + i * 2, my + 20 - (i & 1), 3, 5, 0);
+    /* Maria, facing him, her hand of cards up (the fight won: a tombstone where each stood) */
+    if (fs.state == FIGHT_WON) {
+        draw_graves(&cv, cam, mx + MARIA_W / 2);
+    } else {
+        draw_frame(&cv, MARIA, 2, sc.maria, 0x184, 0xFFFF, NULL, sc.maria_pal, mx, my, MARIA_W, true, false);
+        for (int i = 0; i < sc.hand[1] && i < 4; i++) card(&cv, mx - 2 + i * 2, my + 20 - (i & 1), 3, 5, 0);
+    }
     /* a card (or the swept trick) on its way */
     if (sc.moving) {
         double t = (double)sc.mv_t / sc.mv_len;
@@ -1790,6 +2864,7 @@ void secret_after_frame(Pce *p)
         else card(&cv, x, y, sc.mv_to == 1 ? 5 : 3, sc.mv_to == 1 ? 2 : 5, sc.mv_to == 1 ? sc.mv_kind : 0);
     }
     candle_glow(&cv, cx, ty - 9, p->frame);
+    if (fs.state == FIGHT_WON && fs.won_t < WON_FADE) darken_all(&cv, 256 - fs.won_t * 256 / WON_FADE);
     for (int i = 0; i < 24; i++)   /* the blood */
         if (fs.drop[i].on) {
             Piece d1 = {0, 0, 0x178, 0x0000};

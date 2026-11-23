@@ -321,9 +321,11 @@ static int adpcm_sample(Sound *s)
     return (int)(s->ad_prev + (s->ad_cur - s->ad_prev) * s->ad_phase);
 }
 
-/* ---- the host voice (sound_extra_play) -------------------------------------------- */
+/* ---- the host voices (sound_extra_play) ------------------------------------------- */
+/* Two, mixed: a sound started while one plays takes the other (a yell over the thunder);
+ * with both busy, the one started first gives way. */
 
-static struct {
+typedef struct {
     const uint8_t *data;
     uint32_t len, pos;     /* bytes */
     bool low, on;
@@ -331,55 +333,62 @@ static struct {
     double phase, hz;
     int volume, soften;
     float lp;
-} xv;
+    uint32_t started;
+} ExtraVoice;
+static ExtraVoice xvs[2];
+static uint32_t xv_count;
 
 void sound_extra_play_at(const uint8_t *data, uint32_t len, uint8_t rate, int volume, int soften)
 {
-    memset(&xv, 0, sizeof xv);
-    xv.data = data;
-    xv.len = len;
-    xv.hz = 32000.0 / (16 - (rate & 15));
-    xv.volume = volume;
-    xv.soften = soften;
-    xv.on = data && len;
+    ExtraVoice *xv = !xvs[0].on ? &xvs[0] : !xvs[1].on ? &xvs[1] : xvs[0].started < xvs[1].started ? &xvs[0] : &xvs[1];
+    memset(xv, 0, sizeof *xv);
+    xv->data = data;
+    xv->len = len;
+    xv->hz = 32000.0 / (16 - (rate & 15));
+    xv->volume = volume;
+    xv->soften = soften;
+    xv->started = ++xv_count;
+    xv->on = data && len;
 }
 
 void sound_extra_play(const uint8_t *data, uint32_t len, uint8_t rate) { sound_extra_play_at(data, len, rate, 256, 0); }
 
-void sound_extra_stop(void) { xv.on = false; }
+void sound_extra_stop(void) { xvs[0].on = xvs[1].on = false; }
 
-static int extra_sample(void)
+static int voice_sample(ExtraVoice *xv)
 {
-    if (!xv.on) return 0;
-    xv.phase += xv.hz / SND_RATE;
-    while (xv.phase >= 1.0) {
-        xv.phase -= 1.0;
-        if (xv.pos >= xv.len) {
-            xv.on = false;
+    if (!xv->on) return 0;
+    xv->phase += xv->hz / SND_RATE;
+    while (xv->phase >= 1.0) {
+        xv->phase -= 1.0;
+        if (xv->pos >= xv->len) {
+            xv->on = false;
             return 0;
         }
-        uint8_t b = xv.data[xv.pos];
-        int n = xv.low ? b & 15 : b >> 4;
-        if (xv.low) xv.pos++;
-        xv.low = !xv.low;
-        int st = step_table[xv.index], diff = st >> 3;
+        uint8_t b = xv->data[xv->pos];
+        int n = xv->low ? b & 15 : b >> 4;
+        if (xv->low) xv->pos++;
+        xv->low = !xv->low;
+        int st = step_table[xv->index], diff = st >> 3;
         if (n & 1) diff += st >> 2;
         if (n & 2) diff += st >> 1;
         if (n & 4) diff += st;
         if (n & 8) diff = -diff;
-        xv.signal += diff;
-        if (xv.signal > 2047) xv.signal = 2047;
-        if (xv.signal < -2048) xv.signal = -2048;
-        xv.index += index_adjust[n & 7];
-        if (xv.index < 0) xv.index = 0;
-        if (xv.index > 48) xv.index = 48;
-        xv.prev = xv.cur;
-        xv.cur = xv.signal;
+        xv->signal += diff;
+        if (xv->signal > 2047) xv->signal = 2047;
+        if (xv->signal < -2048) xv->signal = -2048;
+        xv->index += index_adjust[n & 7];
+        if (xv->index < 0) xv->index = 0;
+        if (xv->index > 48) xv->index = 48;
+        xv->prev = xv->cur;
+        xv->cur = xv->signal;
     }
-    float v = (float)(xv.prev + (xv.cur - xv.prev) * xv.phase);
-    xv.lp += (v - xv.lp) * (float)(256 - xv.soften) / 256.0f;
-    return (int)(xv.lp * (float)xv.volume / 256.0f);
+    float v = (float)(xv->prev + (xv->cur - xv->prev) * xv->phase);
+    xv->lp += (v - xv->lp) * (float)(256 - xv->soften) / 256.0f;
+    return (int)(xv->lp * (float)xv->volume / 256.0f);
 }
+
+static int extra_sample(void) { return voice_sample(&xvs[0]) + voice_sample(&xvs[1]); }
 
 /* ---- output ---------------------------------------------------------------------- */
 

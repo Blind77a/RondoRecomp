@@ -106,6 +106,14 @@ const uint8_t *vdc_row_bg_blank(void);
 const uint8_t *vdc_row_bg_edge(void);
 void vdc_set_row_clip(const uint8_t *rows);
 void vdc_set_sprite_hide(uint64_t mask);
+/* - vdc_set_sprite_fades: boxes (screen X as the sprite table has it, 0 = the 4:3 picture's
+ *   left; Y) in which a sprite behind the background (scenery: not a hero, an enemy or the
+ *   HUD, all drawn in front) is drawn, by its middle, only in part, a 4 x 4 ordered dither,
+ *   `level` 0 (none of it) to 16 (all): scenery objects the wider picture would show come and
+ *   go fade in and out (wide.c). n 0: none. */
+typedef struct { int16_t x0, x1, y0, y1; uint8_t level; } VdcFade;
+#define VDC_FADES 8
+void vdc_set_sprite_fades(const VdcFade *list, int n);
 /* - vdc_set_hide_corner: sprites parked above the screen with at most their last 8 rows in it
  *   (a game parks unused ones there: the save menu's torch flames, peeking into the picture's
  *   top left) left out of the picture, counted as drawn as above. Widescreen's menus: a sliver

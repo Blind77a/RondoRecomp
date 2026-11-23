@@ -392,6 +392,14 @@ const uint8_t *vdc_row_bg_edge(void) { return row_bg_edge; }
 void vdc_set_row_clip(const uint8_t *rows) { row_clip = rows; }
 static uint64_t sprite_hide;
 void vdc_set_sprite_hide(uint64_t mask) { sprite_hide = mask; }
+static VdcFade sprite_fade[VDC_FADES];
+static int n_sprite_fade;
+void vdc_set_sprite_fades(const VdcFade *list, int n)
+{
+    n_sprite_fade = n < 0 ? 0 : n > VDC_FADES ? VDC_FADES : n;
+    if (n_sprite_fade) memcpy(sprite_fade, list, (size_t)n_sprite_fade * sizeof *list);
+}
+static const uint8_t FADE_DITHER[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
 static const VdcExtraSprite *extra_spr;
 #define EXTRA_PX 0x4000   /* (a pixel of an extra sprite: kept beside the 256 pixels with side tiles) */
 static int n_extra;
@@ -521,6 +529,13 @@ static void render_sprites(Vdc *d, int y, int x0, int w, uint16_t *out)
         /* 10-bit X: in widescreen, values past the right of any real display are
          * sprites to the left of the picture */
         if (x0 && sx >= 1024 - 32 + x0 - 32) sx -= 1024;
+        int fade = 16;   /* (vdc_set_sprite_fades: by the sprite's middle) */
+        for (int k = 0; k < n_sprite_fade; k++) {
+            const VdcFade *f = &sprite_fade[k];
+            int mx = sx + sw / 2, my = sy + h / 2;
+            if (!(s[3] & 0x80) && mx >= f->x0 && mx < f->x1 && my >= f->y0 && my < f->y1 && f->level < fade)
+                fade = f->level;
+        }
         sx -= x0;
         int pattern = (s[2] >> 1) & 0x3FF;
         if (pattern >= move_lo && pattern <= move_hi) sx += move_dx;
@@ -547,6 +562,7 @@ static void render_sprites(Vdc *d, int y, int x0, int w, uint16_t *out)
                       ((d->vram[(a + 32) & 0x7FFF] >> bit) & 1) << 2 |
                       ((d->vram[(a + 48) & 0x7FFF] >> bit) & 1) << 3;
             if (!col) continue;
+            if (fade < 16 && FADE_DITHER[y & 3][(x + x0) & 3] >= fade) continue;
             if (i == 0) spr0_drawn[x] = true;
             else if (spr0_drawn[x]) raise(d, VDC_ST_CR, (d->reg[R_CR] & 0x01) != 0);
             if (!out[x] && !hidden) out[x] = (uint16_t)(front | pal | col);
